@@ -1,6 +1,10 @@
-# Plank Posture Coach
+# Plank Posture AI Coach
 
 A local macOS desktop app that watches you hold a plank and gives real-time spoken corrections when your form breaks down. Everything runs on-device: MediaPipe Pose for skeleton tracking, and Gradium TTS for voice.
+
+
+https://github.com/user-attachments/assets/ad97f2f0-e1ac-4f70-8333-96f31025cae1
+
 
 ## How it works
 
