@@ -225,7 +225,7 @@ if page == "Home":
         unsafe_allow_html=True
     )
     
-    st.markdown("### Supported Yoga Postures (8 Poses Database)")
+    st.markdown("### Supported Yoga Postures (9 Poses Database)")
     
     # Grid of Poses
     col1, col2 = st.columns(2)
@@ -642,21 +642,44 @@ elif page == "Upload Image Mode":
                                 st.metric("Stability", f"{analysis['stability']:.1f}%")
                             
                             if analysis.get("is_low_confidence", False):
-                                st.warning("⚠ Low confidence detection")
+                                st.warning("⚠ Pose Uncertain — confidence below threshold")
                             
-                            st.write(f"**Detected Pose:** {analysis['detected_pose']}")
+                            detected = analysis['detected_pose']
+                            if detected != 'unknown':
+                                display = POSE_DATABASE.get(detected, {}).get('display_name', detected)
+                                st.success(f"**Detected Pose:** {display}")
+                            else:
+                                st.info("**Detected Pose:** Pose Uncertain")
+                            
                             st.write(f"**Category:** {analysis['category']}")
+                            if analysis.get('category_reason'):
+                                st.caption(f"Reason: {analysis['category_reason']}")
                             
-                            # Debug Panel: Top 3 Candidate Poses
+                            # Debug Panel: Top Candidate Poses
                             candidate_scores = analysis.get("candidate_scores", {})
                             if candidate_scores:
-                                st.markdown("**Top Candidate Poses:**")
+                                st.markdown("**✅ Accepted Candidate Poses:**")
                                 sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                                for pose_name, score in sorted_candidates[:3]:
+                                for pose_name, score in sorted_candidates[:5]:
                                     st.write(f"- {pose_name} → {score:.1f}%")
                             
+                            # Debug Panel: Rejected Poses
+                            rejected = analysis.get("rejected_poses", {})
+                            if rejected:
+                                with st.expander("🚫 Rejected Poses (Hard Filter)"):
+                                    for pose_name, reasons in rejected.items():
+                                        st.write(f"**{pose_name}:**")
+                                        for r in reasons:
+                                            st.write(f"  • {r}")
+                            
+                            # Body Orientation Metrics
+                            orientation = analysis.get("orientation", {})
+                            if orientation:
+                                with st.expander("📐 Body Orientation Metrics"):
+                                    st.json(orientation)
+                            
                             if analysis.get("angles"):
-                                with st.expander("View Joint Angles"):
+                                with st.expander("🦴 Joint Angles"):
                                     st.json(analysis["angles"])
                             
                             if analysis.get("corrections"):
@@ -679,7 +702,7 @@ elif page == "Upload Image Mode":
 # PAGE: YOGA RECOMMENDATION MODE
 # =========================================================================
 elif page == "Yoga Recommendation Mode":
-    # Minimal CSS — only for the page title gradient
+    # Netflix-style card CSS for recommendation page
     st.markdown(
         """
         <style>
@@ -697,6 +720,88 @@ elif page == "Yoga Recommendation Mode":
             color: #9ca3af;
             font-size: 1.1rem;
             margin-bottom: 1.5rem;
+        }
+        .video-card {
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(56, 189, 248, 0.18);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        .video-card:hover {
+            border-color: rgba(56, 189, 248, 0.45);
+            box-shadow: 0 0 24px rgba(56, 189, 248, 0.12);
+        }
+        .video-card-body {
+            padding: 1rem 1.1rem 1.1rem 1.1rem;
+        }
+        .video-card-title-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.45rem;
+            gap: 0.5rem;
+        }
+        .video-card-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            line-height: 1.35;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .badge-beginner { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+        .badge-intermediate { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+        .badge-advanced { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+        .video-card-desc {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            line-height: 1.45;
+            margin-bottom: 0.6rem;
+        }
+        .video-card-benefits {
+            font-size: 0.78rem;
+            color: #38bdf8;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+        .video-card-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            align-items: center;
+        }
+        .tag-pill {
+            display: inline-block;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.68rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.06);
+            color: #9ca3af;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .watch-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            background: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            text-decoration: none;
+            cursor: pointer;
         }
         </style>
         """,
@@ -748,47 +853,64 @@ elif page == "Yoga Recommendation Mode":
     query_text = st.session_state.rec_search_query.strip()
 
     if query_text:
-        st.subheader(f"Results for: _{query_text.capitalize()}_")
+        st.markdown(f"Results for '*{query_text}*'  &nbsp; **+ AI**", unsafe_allow_html=True)
+        st.markdown("")
 
         videos = YogaRecommendationEngine.get_videos_for_query(query_text)
 
         if videos:
-            # Render in rows of 3
+            # Render in rows of 3 — Netflix-style cards with embedded YouTube
             for i in range(0, len(videos), 3):
-                cols = st.columns(3, gap="large")
+                cols = st.columns(3, gap="medium")
                 for j in range(3):
                     if i + j < len(videos):
                         video = videos[i + j]
-                        video_id = video["id"]
                         video_url = video["url"]
                         parsed_id = YogaRecommendationEngine.extract_youtube_id(video_url)
-                        thumb_url = f"https://img.youtube.com/vi/{parsed_id}/hqdefault.jpg"
+
+                        # Difficulty badge class
+                        diff = video.get("difficulty", "Beginner")
+                        if diff == "Beginner":
+                            badge_class = "badge-beginner"
+                        elif diff == "Intermediate":
+                            badge_class = "badge-intermediate"
+                        else:
+                            badge_class = "badge-advanced"
+
+                        # Build tag pills HTML
+                        tags = video.get("tags", [])
+                        duration = video.get("duration", "")
+                        tag_pills = ""
+                        if tags:
+                            for t in tags:
+                                tag_pills += f'<span class="tag-pill">{t}</span>'
+                        if duration:
+                            tag_pills += f'<span class="tag-pill">{duration}</span>'
+
+                        # Benefits text
+                        benefits = video.get("benefits", [])
+                        benefits_text = " · ".join(benefits) if benefits else ""
 
                         with cols[j]:
-                            # --- Thumbnail ---
-                            st.image(thumb_url, use_container_width=True)
+                            # Embedded YouTube player via st.video
+                            st.video(video_url)
 
-                            # --- Difficulty Badge ---
-                            diff = video["difficulty"]
-                            if diff == "Beginner":
-                                badge = "🟢 Beginner"
-                            elif diff == "Intermediate":
-                                badge = "🔵 Intermediate"
-                            else:
-                                badge = "🔴 Advanced"
-
-                            st.markdown(f"**{video['title']}**")
-                            st.caption(f"{badge}  •  {video['description'][:90]}...")
-
-                            # --- Benefits ---
-                            benefits_str = "  •  ".join([f"✨ {b}" for b in video["benefits"]])
-                            st.caption(benefits_str)
-
-                            # --- Expandable Video Player ---
-                            with st.expander("▶ Watch Tutorial"):
-                                st.video(video_url)
-                                st.markdown(f"**Benefits:** {', '.join(video['benefits'])}")
-                                st.markdown(f"[🔗 Open on YouTube]({video_url})")
+                            # Card body with title, badge, description, benefits, tags
+                            card_html = f"""
+                            <div class="video-card-body">
+                                <div class="video-card-title-row">
+                                    <span class="video-card-title">{video['title']}</span>
+                                    <span class="badge {badge_class}">{diff}</span>
+                                </div>
+                                <div class="video-card-desc">{video['description']}</div>
+                                <div class="video-card-benefits">{benefits_text}</div>
+                                <div class="video-card-tags">
+                                    {tag_pills}
+                                    <a href="{video_url}" target="_blank" class="watch-btn">▶ Watch</a>
+                                </div>
+                            </div>
+                            """
+                            st.markdown(card_html, unsafe_allow_html=True)
         else:
             st.warning(f'No tutorials found for "{query_text}". Try one of the quick suggestions above!')
     else:

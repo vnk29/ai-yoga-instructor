@@ -1,13 +1,16 @@
 """
-Industrial Yoga Pose Classification Engine.
+Industrial Yoga Pose Classification Engine — Strict Multi-Stage Gating.
 
-Hierarchical architecture:
-  1. Extract landmark coordinates
-  2. Classify body CATEGORY (Standing/Sitting/Prone/Inverted/Balance)
-  3. Apply hard geometry filters to eliminate impossible candidates
-  4. Score remaining candidates with weighted angle rules
-  5. Apply temporal smoothing (webcam only) or return raw result (image upload)
-  6. Generate prioritized posture corrections
+Architecture:
+  1. Visibility check (shoulders + hips mandatory)
+  2. Extract landmarks + precompute angles
+  3. Compute BODY ORIENTATION metrics (torso slope, hip height, floor relationship)
+  4. Classify body CATEGORY using strict gating rules
+  5. Apply hard geometry filters to eliminate impossible candidates
+  6. Score remaining candidates with weighted angle rules
+  7. Apply temporal smoothing (webcam only) or return raw result (image upload)
+  8. Generate prioritized posture corrections
+  9. Build debug/rejection panel
 """
 
 import numpy as np
@@ -16,7 +19,7 @@ from yoga_config import POSE_DATABASE
 
 
 class YogaAnalyzer:
-    """Industrial-grade hierarchical yoga pose classifier."""
+    """Industrial-grade hierarchical yoga pose classifier with strict orientation gating."""
 
     def __init__(self) -> None:
         # Temporal smoothing buffers (webcam mode only)
@@ -32,7 +35,7 @@ class YogaAnalyzer:
 
     @staticmethod
     def _angle(p1, p2, p3) -> float:
-        """Angle (degrees) at vertex p2 formed by p1→p2→p3. Points are (x, y, ...)."""
+        """Angle (degrees) at vertex p2 formed by p1→p2→p3."""
         a = np.array([p1[0], p1[1]])
         b = np.array([p2[0], p2[1]])
         c = np.array([p3[0], p3[1]])
@@ -96,7 +99,7 @@ class YogaAnalyzer:
     # BODY VISIBILITY CHECK
     # ------------------------------------------------------------------
 
-    def _check_visibility(self, detector, lm_list) -> tuple[bool, str]:
+    def _check_visibility(self, detector, lm_list) -> tuple:
         """Core joints (shoulders + hips) must have visibility > 0.45."""
         core = ["LEFT_SHOULDER", "RIGHT_SHOULDER", "LEFT_HIP", "RIGHT_HIP"]
         missing = []
@@ -131,172 +134,238 @@ class YogaAnalyzer:
         return float(np.clip(100.0 - var * 80000.0, 0.0, 100.0))
 
     # ------------------------------------------------------------------
-    # STEP 1: HIERARCHICAL CATEGORY CLASSIFICATION
+    # BODY ORIENTATION METRICS
     # ------------------------------------------------------------------
 
-    def classify_category(self, c: dict, ac: dict) -> str:
+    def _compute_orientation(self, c: dict, ac: dict) -> dict:
         """
-        Classify body orientation into one of: Standing, Sitting, Prone, Inverted, Balance.
-        Uses hip/shoulder/ankle geometry.
-        
-        c  = raw landmark coords dict
-        ac = precomputed angle cache
+        Compute body orientation metrics used by both category classification
+        and hard filters. Returns a dict of floats describing body geometry.
         """
         ls, rs = c.get("LEFT_SHOULDER"), c.get("RIGHT_SHOULDER")
         lh, rh = c.get("LEFT_HIP"), c.get("RIGHT_HIP")
         la, ra = c.get("LEFT_ANKLE"), c.get("RIGHT_ANKLE")
         lw, rw = c.get("LEFT_WRIST"), c.get("RIGHT_WRIST")
+        lk, rk = c.get("LEFT_KNEE"), c.get("RIGHT_KNEE")
 
-        if not all([ls, rs, lh, rh]):
-            return "Standing"
+        o = {}
 
-        hip_y      = (lh[1] + rh[1]) / 2.0
-        shoulder_y = (ls[1] + rs[1]) / 2.0
-        ankle_y    = (la[1] + ra[1]) / 2.0 if (la and ra) else hip_y + 0.35
+        # Y-positions (in image coords: 0=top, 1=bottom)
+        o["hip_y"]      = (lh[1] + rh[1]) / 2.0 if (lh and rh) else 0.5
+        o["shoulder_y"] = (ls[1] + rs[1]) / 2.0 if (ls and rs) else 0.5
+        o["ankle_y"]    = (la[1] + ra[1]) / 2.0 if (la and ra) else o["hip_y"] + 0.35
+        o["wrist_y"]    = (lw[1] + rw[1]) / 2.0 if (lw and rw) else o["shoulder_y"]
+        o["knee_y"]     = (lk[1] + rk[1]) / 2.0 if (lk and rk) else o["hip_y"] + 0.15
 
-        # --- INVERTED: hips ABOVE shoulders (hip_y < shoulder_y in image coords) ---
-        # AND hands near floor level (wrist_y close to ankle_y)
-        if hip_y < shoulder_y - 0.05:
-            return "Inverted"
+        # Gaps
+        o["hip_ankle_gap"] = abs(o["hip_y"] - o["ankle_y"])
+        o["hip_shoulder_gap"] = o["hip_y"] - o["shoulder_y"]  # positive = hips below shoulders (normal)
+        o["hip_knee_gap"] = abs(o["hip_y"] - o["knee_y"])
 
-        # --- PRONE (Cobra): hips near ankles AND shoulders elevated above hips ---
-        hip_ankle_gap = abs(hip_y - ankle_y)
-        if hip_ankle_gap < 0.22 and shoulder_y < hip_y:
-            return "Prone"
+        # Torso slope: angle of shoulder-hip line from horizontal
+        # High value (near 90) = upright torso. Low value = horizontal/leaning
+        if ac["shoulder_mid"] and ac["hip_mid"]:
+            dx = abs(ac["shoulder_mid"][0] - ac["hip_mid"][0])
+            dy = abs(ac["shoulder_mid"][1] - ac["hip_mid"][1])
+            o["torso_slope"] = float(np.degrees(np.arctan2(dy, dx + 1e-6)))
+        else:
+            o["torso_slope"] = 90.0  # default upright
 
-        # --- SITTING: hips near ankle level, upright torso ---
-        if hip_ankle_gap < 0.28 and shoulder_y < hip_y:
-            return "Sitting"
+        # Knee angles
+        o["avg_knee_angle"] = (ac["left_knee"] + ac["right_knee"]) / 2.0
+        o["min_knee_angle"] = min(ac["left_knee"], ac["right_knee"])
+        o["max_knee_angle"] = max(ac["left_knee"], ac["right_knee"])
 
-        # --- BALANCE (Boat): torso leaning back, legs elevated ---
-        # Check if ankles are above or near hip level AND torso is angled
+        # Knee spread (x-axis)
+        if lk and rk:
+            o["knee_x_spread"] = abs(lk[0] - rk[0])
+        else:
+            o["knee_x_spread"] = 0.0
+
+        # Ankle spread (x-axis)
+        if la and ra:
+            o["ankle_x_spread"] = abs(la[0] - ra[0])
+        else:
+            o["ankle_x_spread"] = 0.0
+
+        return o
+
+    # ------------------------------------------------------------------
+    # STEP 1: STRICT CATEGORY CLASSIFICATION
+    # ------------------------------------------------------------------
+
+    def classify_category(self, c: dict, ac: dict, o: dict) -> tuple:
+        """
+        Classify body orientation into one of: Standing, Sitting, Prone, Inverted, Balance.
+        Uses strict body orientation metrics with explicit gating.
+
+        Returns (category_str, reason_str)
+        """
+        reasons = []
+
+        # --- INVERTED: hips clearly ABOVE shoulders ---
+        # In image coords: hip_y < shoulder_y
+        if o["hip_shoulder_gap"] < -0.05:
+            reasons.append("hips above shoulders")
+            return "Inverted", "; ".join(reasons)
+
+        # --- Key decision: UPRIGHT TORSO vs HORIZONTAL TORSO ---
+        torso_is_upright = o["torso_slope"] > 50.0  # >50° from horizontal = upright-ish
+        torso_is_horizontal = o["torso_slope"] < 35.0  # <35° = lying down / prone
+        hips_near_floor = o["hip_ankle_gap"] < 0.25  # hips near ankle Y = on floor
+        knees_folded = o["avg_knee_angle"] < 130.0
+
+        # --- PRONE: torso horizontal AND hips near floor level ---
+        # This MUST check torso orientation, not just hip height
+        if torso_is_horizontal and hips_near_floor and o["shoulder_y"] < o["hip_y"]:
+            reasons.append(f"torso horizontal (slope={o['torso_slope']:.0f}°)")
+            reasons.append(f"hips near floor (gap={o['hip_ankle_gap']:.2f})")
+            return "Prone", "; ".join(reasons)
+
+        # --- SITTING: hips near floor AND torso upright ---
+        if hips_near_floor and torso_is_upright:
+            reasons.append(f"hips near floor (gap={o['hip_ankle_gap']:.2f})")
+            reasons.append(f"torso upright (slope={o['torso_slope']:.0f}°)")
+            return "Sitting", "; ".join(reasons)
+
+        # --- BALANCE (Boat): ankles elevated near/above hip level, torso leaning back ---
+        la, ra = c.get("LEFT_ANKLE"), c.get("RIGHT_ANKLE")
         if la and ra:
             avg_ankle_y = (la[1] + ra[1]) / 2.0
-            # Legs are elevated (ankles near or above hip level)
-            if avg_ankle_y < hip_y - 0.02 and shoulder_y < hip_y:
-                return "Balance"
+            if avg_ankle_y < o["hip_y"] - 0.02 and o["shoulder_y"] < o["hip_y"]:
+                reasons.append("legs elevated above hips")
+                return "Balance", "; ".join(reasons)
+
+        # --- SITTING fallback: hips near floor but torso is in-between ---
+        # Catches slouching / uncertain sitting postures
+        if hips_near_floor and knees_folded:
+            reasons.append(f"hips near floor + knees folded ({o['avg_knee_angle']:.0f}°)")
+            return "Sitting", "; ".join(reasons)
 
         # --- STANDING: default ---
-        # Sub-check for Tree (one-leg balance) vs generic standing
-        lk_a = ac["left_knee"]
-        rk_a = ac["right_knee"]
-        one_bent = (lk_a < 130.0 and rk_a > 150.0) or (rk_a < 130.0 and lk_a > 150.0)
-        standing_height = (ankle_y - hip_y) > 0.25
-        if one_bent and standing_height:
-            return "Standing"  # Tree is a Standing pose
-
-        return "Standing"
+        reasons.append("default (upright, hips above ankles)")
+        return "Standing", "; ".join(reasons)
 
     # ------------------------------------------------------------------
     # STEP 2: HARD GEOMETRY FILTERS
     # ------------------------------------------------------------------
 
-    def _passes_hard_filters(self, pose_key: str, c: dict, ac: dict) -> bool:
+    def _passes_hard_filters(self, pose_key: str, c: dict, ac: dict, o: dict) -> tuple:
         """
         Check boolean geometry constraints for a pose.
-        Returns True if the body shape is COMPATIBLE with this pose.
-        Returns False to eliminate it immediately.
+        Returns (passed: bool, rejection_reasons: list[str])
         """
         filters = POSE_DATABASE[pose_key].get("hard_filters", {})
-        
+        rejections = []
+
         ls, rs = c.get("LEFT_SHOULDER"), c.get("RIGHT_SHOULDER")
         lh, rh = c.get("LEFT_HIP"), c.get("RIGHT_HIP")
         la, ra = c.get("LEFT_ANKLE"), c.get("RIGHT_ANKLE")
         lk, rk = c.get("LEFT_KNEE"), c.get("RIGHT_KNEE")
         lw, rw = c.get("LEFT_WRIST"), c.get("RIGHT_WRIST")
 
-        hip_y = (lh[1] + rh[1]) / 2.0 if (lh and rh) else 0.5
-        shoulder_y = (ls[1] + rs[1]) / 2.0 if (ls and rs) else 0.5
-        ankle_y = (la[1] + ra[1]) / 2.0 if (la and ra) else hip_y + 0.3
-
         for f_name, f_val in filters.items():
             if not f_val:
                 continue
 
             if f_name == "not_inverted":
-                # Hips must be below shoulders (hip_y > shoulder_y in image coords)
-                if hip_y < shoulder_y - 0.05:
-                    return False
+                if o["hip_shoulder_gap"] < -0.05:
+                    rejections.append("hips above shoulders (inverted)")
+
+            elif f_name == "not_seated":
+                # For standing poses: hips must be well above ankles
+                if o["hip_ankle_gap"] < 0.22:
+                    rejections.append(f"hips too close to floor (gap={o['hip_ankle_gap']:.2f})")
+
+            elif f_name == "not_prone":
+                # For sitting poses: torso must NOT be horizontal
+                if o["torso_slope"] < 35.0:
+                    rejections.append(f"torso is horizontal (slope={o['torso_slope']:.0f}°), not seated")
 
             elif f_name == "body_upright":
-                # Torso near-vertical: check that hip-to-shoulder is roughly vertical
                 if ac["shoulder_mid"] and ac["hip_mid"]:
                     dx = abs(ac["shoulder_mid"][0] - ac["hip_mid"][0])
-                    if dx > 0.25:  # Too tilted horizontally
-                        return False
+                    if dx > 0.25:
+                        rejections.append(f"torso too tilted (dx={dx:.2f})")
+
+            elif f_name == "torso_upright":
+                if o["torso_slope"] < 45.0:
+                    rejections.append(f"torso not upright (slope={o['torso_slope']:.0f}°)")
+
+            elif f_name == "torso_horizontal":
+                # Cobra: torso MUST be near-horizontal
+                if o["torso_slope"] > 55.0:
+                    rejections.append(f"torso too vertical for prone pose (slope={o['torso_slope']:.0f}°)")
 
             elif f_name == "legs_straight":
                 if ac["left_knee"] < 145 or ac["right_knee"] < 145:
-                    return False
+                    rejections.append(f"knees bent (L={ac['left_knee']:.0f}°, R={ac['right_knee']:.0f}°)")
 
             elif f_name == "one_knee_bent":
                 lk_a, rk_a = ac["left_knee"], ac["right_knee"]
                 if not ((lk_a < 135 and rk_a > 145) or (rk_a < 135 and lk_a > 145)):
-                    return False
+                    rejections.append(f"no single bent knee (L={lk_a:.0f}°, R={rk_a:.0f}°)")
 
             elif f_name == "standing_height":
-                if (ankle_y - hip_y) < 0.20:
-                    return False
+                if o["hip_ankle_gap"] < 0.20:
+                    rejections.append(f"not standing height (hip-ankle gap={o['hip_ankle_gap']:.2f})")
 
             elif f_name == "wide_stance":
                 if la and ra:
                     if abs(la[0] - ra[0]) < 0.20:
-                        return False
+                        rejections.append("stance too narrow")
 
             elif f_name == "one_knee_bent_warrior":
                 lk_a, rk_a = ac["left_knee"], ac["right_knee"]
                 if not ((lk_a < 140 and rk_a > 145) or (rk_a < 140 and lk_a > 145)):
-                    return False
+                    rejections.append(f"no warrior knee bend (L={lk_a:.0f}°, R={rk_a:.0f}°)")
 
             elif f_name == "seated":
-                if abs(hip_y - ankle_y) > 0.30:
-                    return False
+                if o["hip_ankle_gap"] > 0.30:
+                    rejections.append(f"not seated (hip-ankle gap={o['hip_ankle_gap']:.2f})")
 
             elif f_name == "knees_wide":
                 if lk and rk and la and ra:
                     knees_x = abs(lk[0] - rk[0])
                     ankles_x = abs(la[0] - ra[0])
                     if knees_x < ankles_x * 0.9:
-                        return False
+                        rejections.append("knees not wider than ankles")
 
             elif f_name == "knees_moderate_spread":
-                # For lotus: knees spread but can be less than butterfly
-                pass  # Soft check, don't eliminate
+                pass  # Soft check, don't hard-reject
 
             elif f_name == "prone_body":
-                if abs(hip_y - ankle_y) > 0.25:
-                    return False
-                if shoulder_y > hip_y:  # shoulders must be above hips
-                    return False
+                if o["hip_ankle_gap"] > 0.25:
+                    rejections.append(f"hips too high for prone (gap={o['hip_ankle_gap']:.2f})")
+                if o["shoulder_y"] > o["hip_y"]:
+                    rejections.append("shoulders below hips (not prone)")
 
             elif f_name == "hips_above_shoulders":
-                if hip_y > shoulder_y - 0.03:
-                    return False
+                if o["hip_y"] > o["shoulder_y"] - 0.03:
+                    rejections.append("hips not above shoulders")
 
             elif f_name == "hands_on_floor":
                 if lw and rw:
                     wrist_y = (lw[1] + rw[1]) / 2.0
-                    # Wrists should be at or below shoulder level
-                    if wrist_y < shoulder_y - 0.15:
-                        return False
+                    if wrist_y < o["shoulder_y"] - 0.15:
+                        rejections.append("wrists not near floor")
 
             elif f_name == "v_shape":
                 if la and ra:
                     avg_ankle_y = (la[1] + ra[1]) / 2.0
-                    if avg_ankle_y > hip_y + 0.05:
-                        return False
+                    if avg_ankle_y > o["hip_y"] + 0.05:
+                        rejections.append("legs not elevated for V-shape")
 
             elif f_name == "leaning_back":
                 if ac["shoulder_mid"] and ac["hip_mid"]:
-                    # Torso should not be fully vertical
                     torso_vert = self._angle(
                         ac["shoulder_mid"], ac["hip_mid"],
                         (ac["hip_mid"][0] + 0.5, ac["hip_mid"][1], 0.0, 1.0)
                     )
-                    if torso_vert > 80.0:  # too upright for boat
-                        return False
+                    if torso_vert > 80.0:
+                        rejections.append(f"torso too upright for boat (angle={torso_vert:.0f}°)")
 
-        return True
+        return (len(rejections) == 0), rejections
 
     # ------------------------------------------------------------------
     # STEP 3: MIRRORED SIDE DETECTION
@@ -329,10 +398,7 @@ class YogaAnalyzer:
     # ------------------------------------------------------------------
 
     def _compute_joint_value(self, joint_type: str, c: dict, ac: dict, sides: dict) -> float:
-        """
-        Single function that maps any joint_type string → computed float.
-        Eliminates all duplicated elif chains.
-        """
+        """Single function that maps any joint_type string → computed float."""
         ls, rs = c.get("LEFT_SHOULDER"), c.get("RIGHT_SHOULDER")
         lh, rh = c.get("LEFT_HIP"), c.get("RIGHT_HIP")
         lw, rw = c.get("LEFT_WRIST"), c.get("RIGHT_WRIST")
@@ -411,7 +477,7 @@ class YogaAnalyzer:
     # STEP 5: CONFIDENCE SCORING
     # ------------------------------------------------------------------
 
-    def _score_pose(self, pose_key: str, c: dict, ac: dict, sides: dict) -> tuple[float, list]:
+    def _score_pose(self, pose_key: str, c: dict, ac: dict, sides: dict) -> tuple:
         """
         Weighted angle scoring with soft thresholds.
         Returns (confidence_0_to_100, debug_details_list).
@@ -456,22 +522,29 @@ class YogaAnalyzer:
     # STEP 6: EVALUATE ALL CANDIDATES IN CATEGORY
     # ------------------------------------------------------------------
 
-    def _evaluate_candidates(self, category: str, c: dict, ac: dict) -> list:
+    def _evaluate_candidates(self, category: str, c: dict, ac: dict, o: dict) -> tuple:
         """
         Score all poses in the active category that pass hard filters.
-        Returns sorted list of (pose_key, confidence, sides, details).
+        Returns (sorted_candidates, rejection_log).
         """
         candidates = []
+        rejection_log = {}
+
         for pose_key, data in POSE_DATABASE.items():
             if data["category"] != category:
                 continue
-            if not self._passes_hard_filters(pose_key, c, ac):
+
+            passed, rejections = self._passes_hard_filters(pose_key, c, ac, o)
+            if not passed:
+                rejection_log[data["display_name"]] = rejections
                 continue
+
             sides = self._detect_sides(pose_key, ac)
             conf, details = self._score_pose(pose_key, c, ac, sides)
             candidates.append((pose_key, conf, sides, details))
 
-        return sorted(candidates, key=lambda x: x[1], reverse=True)
+        sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)
+        return sorted_cands, rejection_log
 
     # ------------------------------------------------------------------
     # STEP 7: TEMPORAL SMOOTHING (webcam only)
@@ -534,6 +607,7 @@ class YogaAnalyzer:
         """
         result = {
             "category": "Auto Detecting",
+            "category_reason": "",
             "detected_pose": "unknown",
             "confidence": 0.0,
             "accuracy": 0.0,
@@ -541,6 +615,8 @@ class YogaAnalyzer:
             "stability": 100.0,
             "entry_guidance": "",
             "candidate_scores": {},
+            "rejected_poses": {},
+            "orientation": {},
             "angles": {},
             "is_low_confidence": False,
         }
@@ -572,19 +648,32 @@ class YogaAnalyzer:
             "Right Arm": round(ac["right_arm"], 1),
         }
 
-        # 4. Classify body category
-        category = self.classify_category(c, ac)
-        result["category"] = category
+        # 4. Compute body orientation metrics
+        o = self._compute_orientation(c, ac)
+        result["orientation"] = {
+            "torso_slope": round(o["torso_slope"], 1),
+            "hip_ankle_gap": round(o["hip_ankle_gap"], 3),
+            "hip_shoulder_gap": round(o["hip_shoulder_gap"], 3),
+            "avg_knee_angle": round(o["avg_knee_angle"], 1),
+        }
 
-        # 5. Evaluate candidates within category
-        candidates = self._evaluate_candidates(category, c, ac)
+        # 5. Classify body category (STRICT GATING)
+        category, cat_reason = self.classify_category(c, ac, o)
+        result["category"] = category
+        result["category_reason"] = cat_reason
+
+        # 6. Evaluate candidates within category (with rejection logging)
+        candidates, rejection_log = self._evaluate_candidates(category, c, ac, o)
 
         # Store all scores for debug panel
         for p_key, conf, _, _ in candidates:
             display = POSE_DATABASE[p_key]["display_name"]
             result["candidate_scores"][display] = round(conf, 1)
 
-        # 6. Pick best candidate
+        # Store rejection log for debug panel
+        result["rejected_poses"] = rejection_log
+
+        # 7. Pick best candidate
         best_key = "unknown"
         best_conf = 0.0
         best_sides = {}
@@ -614,13 +703,13 @@ class YogaAnalyzer:
                         best_key = "unknown"
                     break
 
-        # 7. Temporal smoothing (SKIP for static image uploads)
+        # 8. Temporal smoothing (SKIP for static image uploads)
         if is_static:
             final_key = best_key
         else:
             final_key = self._temporal_smooth(best_key, best_conf)
 
-        # 8. Build result
+        # 9. Build result
         if final_key == "unknown":
             result["detected_pose"] = "unknown"
             result["confidence"] = 0.0
@@ -631,7 +720,7 @@ class YogaAnalyzer:
                         result["entry_guidance"] = data["entry_guidance"]
                         break
             else:
-                result["entry_guidance"] = f"Align yourself into the mat. Checking {category} candidates..."
+                result["entry_guidance"] = f"Pose Uncertain — checking {category} candidates..."
             result["corrections"].append({"key": "no_pose", "message": result["entry_guidance"], "priority": 1})
             return result
 
@@ -641,7 +730,7 @@ class YogaAnalyzer:
         result["accuracy"] = round(best_conf, 1)
         result["entry_guidance"] = pose_data["entry_guidance"]
 
-        # 9. Generate corrections
+        # 10. Generate corrections
         errors = []
         for rule_name, rule in pose_data["rules"].items():
             val = self._compute_joint_value(rule["joint"], c, ac, best_sides)

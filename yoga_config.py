@@ -1,6 +1,6 @@
 """
 Industrial Yoga Pose Configuration Database.
-Defines 8 stabilized yoga poses with hierarchical categories, hard geometry filters,
+Defines 9 stabilized yoga poses with hierarchical categories, hard geometry filters,
 weighted angle rules, tolerances, and prioritized correction messages.
 """
 
@@ -16,7 +16,7 @@ WELLNESS_GOALS = ["stress", "back pain", "flexibility", "weight loss"]
 POSE_CATEGORIES = ["Standing", "Sitting", "Prone", "Inverted", "Balance"]
 
 # ---------------------------------------------------------------------------
-# 8-Pose Industrial Database with Hard Filters
+# 9-Pose Industrial Database with Hard Filters
 # ---------------------------------------------------------------------------
 POSE_DATABASE = {
     # ===================================================================
@@ -32,6 +32,7 @@ POSE_DATABASE = {
             "body_upright": True,       # torso must be near-vertical
             "legs_straight": True,      # both knees > 150
             "not_inverted": True,       # hips must be BELOW shoulders (in image coords: hip_y > shoulder_y)
+            "not_seated": True,         # hips must be well above ankles
         },
         "rules": {
             "spine_alignment": {
@@ -71,6 +72,7 @@ POSE_DATABASE = {
             "one_knee_bent": True,      # one knee < 130, other > 150
             "standing_height": True,    # ankle-to-hip distance > 0.25
             "not_inverted": True,
+            "not_seated": True,
         },
         "rules": {
             "standing_leg": {
@@ -110,6 +112,7 @@ POSE_DATABASE = {
             "wide_stance": True,        # ankle x-distance > 0.25
             "one_knee_bent_warrior": True,  # one knee ~90, other > 150
             "not_inverted": True,
+            "not_seated": True,
         },
         "rules": {
             "front_knee_bend": {
@@ -142,6 +145,45 @@ POSE_DATABASE = {
     # ===================================================================
     # SITTING POSES
     # ===================================================================
+    "sukhasana": {
+        "category": "Sitting",
+        "display_name": "Sukhasana (Easy Pose)",
+        "mirrored": False,
+        "threshold": 35.0,
+        "entry_guidance": "Sit cross-legged on the floor with a tall spine, hands resting on your knees, shoulders relaxed.",
+        "hard_filters": {
+            "seated": True,             # hips near ankle level
+            "torso_upright": True,      # torso must be near-vertical
+            "not_prone": True,          # torso must NOT be horizontal
+        },
+        "rules": {
+            "spine_upright": {
+                "joint": "torso_vertical",
+                "target": 90.0,
+                "tolerance": 22.0,
+                "weight": 0.40,
+                "error_msg": "Sit tall and lengthen your spine upward.",
+                "priority": 1
+            },
+            "knee_fold": {
+                "joint": "avg_knee",
+                "target": 80.0,
+                "tolerance": 45.0,
+                "weight": 0.30,
+                "error_msg": "Cross your legs comfortably in front of you.",
+                "priority": 2
+            },
+            "hands_on_knees": {
+                "joint": "hands_knee_proximity",
+                "target": 0.08,
+                "tolerance": 0.18,
+                "weight": 0.30,
+                "error_msg": "Rest your hands gently on your knees.",
+                "priority": 3
+            }
+        }
+    },
+
     "butterfly": {
         "category": "Sitting",
         "display_name": "Butterfly Pose (Baddha Konasana)",
@@ -151,6 +193,8 @@ POSE_DATABASE = {
         "hard_filters": {
             "seated": True,             # hips near ankle level
             "knees_wide": True,         # knee x-spread > ankle x-spread
+            "torso_upright": True,
+            "not_prone": True,
         },
         "rules": {
             "spine_upright": {
@@ -188,6 +232,8 @@ POSE_DATABASE = {
         "entry_guidance": "Sit upright with legs crossed, each foot resting on the opposite thigh. Keep spine tall and shoulders relaxed.",
         "hard_filters": {
             "seated": True,
+            "torso_upright": True,
+            "not_prone": True,
             "knees_moderate_spread": True,  # knees spread but not as wide as butterfly
         },
         "rules": {
@@ -225,10 +271,11 @@ POSE_DATABASE = {
         "category": "Prone",
         "display_name": "Cobra Pose (Bhujangasana)",
         "mirrored": False,
-        "threshold": 38.0,
+        "threshold": 40.0,
         "entry_guidance": "Lie prone on your stomach, place hands near chest, and gently lift your torso arching the back.",
         "hard_filters": {
-            "prone_body": True,         # hips near ankle level AND shoulder above hip
+            "prone_body": True,         # torso horizontal, hips near ankle level
+            "torso_horizontal": True,   # torso must NOT be vertical (reject sitting)
             "not_inverted": True,       # hips below shoulders in Y
         },
         "rules": {

@@ -9,16 +9,18 @@ import re
 class YogaRecommendationEngine:
     """Curated video discovery database matching wellness goals directly."""
 
-    # Richly annotated video catalog with difficulty, descriptions, and benefit tags
+    # Richly annotated video catalog with difficulty, descriptions, benefit tags, duration, and type tags
     VIDEO_CATALOG = {
         "stress": [
             {
                 "id": "sTANio_2E0Q",
                 "url": "https://www.youtube.com/watch?v=sTANio_2E0Q",
-                "title": "Yoga For Stress Relief - Gentle Practice",
+                "title": "Yoga For Stress Relief — Gentle Practice",
                 "description": "Unwind your body, release stress hormones, and calm the nervous system with simple calming folds.",
                 "difficulty": "Beginner",
-                "benefits": ["Stress reduction", "Deep relaxation", "Calms the mind"]
+                "benefits": ["Stress reduction", "Deep relaxation"],
+                "duration": "20 min",
+                "tags": ["Gentle", "Relaxation"]
             },
             {
                 "id": "Nw2oBIrQk84",
@@ -26,7 +28,9 @@ class YogaRecommendationEngine:
                 "title": "15 Min Yoga for Anxiety & Deep Calm",
                 "description": "Slow, grounding floor stretches to relieve daily mental pressure and physical chest tightness.",
                 "difficulty": "Beginner",
-                "benefits": ["Anxiety relief", "Deep relaxation", "Improves breathing"]
+                "benefits": ["Anxiety relief", "Improves breathing"],
+                "duration": "15 min",
+                "tags": ["Calming", "Floor"]
             },
             {
                 "id": "9J7GPje3y14",
@@ -34,7 +38,9 @@ class YogaRecommendationEngine:
                 "title": "Deep Restorative Yin Yoga Flow",
                 "description": "Passive floor postures held for longer durations to release tension in deep connective tissues.",
                 "difficulty": "Intermediate",
-                "benefits": ["Deep relaxation", "Joint mobility", "Stress reduction"]
+                "benefits": ["Joint mobility", "Stress reduction"],
+                "duration": "30 min",
+                "tags": ["Yin", "Restorative"]
             }
         ],
         "back pain": [
@@ -44,7 +50,9 @@ class YogaRecommendationEngine:
                 "title": "Yoga for Lower Back Pain Relief",
                 "description": "Specifically designed to lengthen back muscles, release spine stiffness, and build support.",
                 "difficulty": "Beginner",
-                "benefits": ["Relieves stiffness", "Spinal decompression", "Builds strength"]
+                "benefits": ["Relieves stiffness", "Spinal decompression"],
+                "duration": "20 min",
+                "tags": ["Tutorial", "Therapeutic"]
             },
             {
                 "id": "XeXz8fIZcoY",
@@ -52,7 +60,9 @@ class YogaRecommendationEngine:
                 "title": "10 Min Daily Stretch for Back Tension",
                 "description": "Quick and highly effective floor stretches to open up compressed lumbar vertebrae.",
                 "difficulty": "Beginner",
-                "benefits": ["Spinal decompression", "Relieves backache", "Improves mobility"]
+                "benefits": ["Relieves backache", "Improves mobility"],
+                "duration": "10 min",
+                "tags": ["Quick", "Daily"]
             },
             {
                 "id": "N643bZ2QvG0",
@@ -60,33 +70,71 @@ class YogaRecommendationEngine:
                 "title": "Bridge Pose Core & Spine Support",
                 "description": "Build glute and core stability to permanently relieve lower back pressure and strain.",
                 "difficulty": "Intermediate",
-                "benefits": ["Builds strength", "Glute activation", "Spinal decompression"]
+                "benefits": ["Builds strength", "Glute activation"],
+                "duration": "15 min",
+                "tags": ["Strength", "Core"]
             }
         ],
         "flexibility": [
             {
                 "id": "o0G10Z5bA54",
                 "url": "https://www.youtube.com/watch?v=o0G10Z5bA54",
-                "title": "Yoga for Flexibility & Joint Mobility",
-                "description": "A deep full-body stretch targeting stubborn hamstring fibers, tight groins, and hips.",
+                "title": "yoga for flexibility — Complete 20 Min Guide",
+                "description": "Comprehensive yoga for flexibility with expert guidance.",
                 "difficulty": "Beginner",
-                "benefits": ["Improves flexibility", "Deep stretch", "Joint mobility"]
+                "benefits": ["Builds strength", "Improves flexibility"],
+                "duration": "20 min",
+                "tags": ["Tutorial", "Complete"]
             },
             {
                 "id": "S6gB0QHvRD4",
                 "url": "https://www.youtube.com/watch?v=S6gB0QHvRD4",
-                "title": "Triangle Pose Alignment Practice",
-                "description": "Incorporate lateral bends to open up the ribs, lengthen hamstrings, and test stability.",
-                "difficulty": "Intermediate",
-                "benefits": ["Improves flexibility", "Improves balance", "Side stretch"]
+                "title": "yoga for flexibility For Beginners",
+                "description": "Gentle accessible yoga for flexibility for beginners.",
+                "difficulty": "Beginner",
+                "benefits": ["Accessible", "No equipment"],
+                "duration": "15 min",
+                "tags": ["Beginner", "Gentle"]
             },
             {
                 "id": "YXMskVfP3v4",
                 "url": "https://www.youtube.com/watch?v=YXMskVfP3v4",
-                "title": "Butterfly Pose for Hip Socket Release",
-                "description": "Targeted hip opener to release pelvic congestion, loosen groin, and improve sitting posture.",
+                "title": "Morning yoga for flexibility Flow",
+                "description": "Energising morning yoga for flexibility.",
                 "difficulty": "Beginner",
-                "benefits": ["Hip opening", "Relieves tightness", "Improves mobility"]
+                "benefits": ["Energises body"],
+                "duration": "15 min",
+                "tags": ["Morning", "Flow"]
+            },
+            {
+                "id": "g_tea8ZNtKc",
+                "url": "https://www.youtube.com/watch?v=g_tea8ZNtKc",
+                "title": "yoga for flexibility Yin Deep Stretch",
+                "description": "Deep stretching yin yoga for full body flexibility and relaxation.",
+                "difficulty": "Intermediate",
+                "benefits": ["Deep stretch", "Full body"],
+                "duration": "25 min",
+                "tags": ["Yin", "Deep Stretch"]
+            },
+            {
+                "id": "Eml2xg6PbiQ",
+                "url": "https://www.youtube.com/watch?v=Eml2xg6PbiQ",
+                "title": "yoga for flexibility Power Flow",
+                "description": "Dynamic power yoga flow to increase flexibility and strength simultaneously.",
+                "difficulty": "Advanced",
+                "benefits": ["Power yoga", "Builds strength"],
+                "duration": "30 min",
+                "tags": ["Power", "Advanced"]
+            },
+            {
+                "id": "4pKly2JojMw",
+                "url": "https://www.youtube.com/watch?v=4pKly2JojMw",
+                "title": "yoga for flexibility Meditation & Nidra",
+                "description": "Calming yoga nidra with gentle flexibility movements for mind-body balance.",
+                "difficulty": "Beginner",
+                "benefits": ["Relaxation", "Mind-body balance"],
+                "duration": "20 min",
+                "tags": ["Meditation", "Nidra"]
             }
         ],
         "beginner yoga": [
@@ -96,7 +144,9 @@ class YogaRecommendationEngine:
                 "title": "Yoga For Complete Beginners - 20 Min",
                 "description": "A perfect foundation practice guiding you through key poses with slow alignment cues.",
                 "difficulty": "Beginner",
-                "benefits": ["Builds strength", "Joint mobility", "Easy starting"]
+                "benefits": ["Builds strength", "Easy starting"],
+                "duration": "20 min",
+                "tags": ["Foundation", "Tutorial"]
             },
             {
                 "id": "K-GpDP_4C8U",
@@ -104,7 +154,9 @@ class YogaRecommendationEngine:
                 "title": "20 Min Easy Gentle Beginner Warmup",
                 "description": "A slow, comfortable routine focusing on simple poses and steady breathing transitions.",
                 "difficulty": "Beginner",
-                "benefits": ["Easy starting", "Improves breathing", "Calms the mind"]
+                "benefits": ["Improves breathing", "Calms the mind"],
+                "duration": "20 min",
+                "tags": ["Gentle", "Warmup"]
             }
         ],
         "weight loss": [
@@ -112,17 +164,21 @@ class YogaRecommendationEngine:
                 "id": "O1114-1z34c",
                 "url": "https://www.youtube.com/watch?v=O1114-1z34c",
                 "title": "Yoga Tone - Yoga For Weight Loss",
-                "description": "A high-energy vinyasa flow specifically created to build strength, increase endurance, and tone the entire body.",
+                "description": "A high-energy vinyasa flow to build strength, increase endurance, and tone the entire body.",
                 "difficulty": "Intermediate",
-                "benefits": ["Builds strength", "High calorie burn", "Metabolic boost"]
+                "benefits": ["High calorie burn", "Metabolic boost"],
+                "duration": "25 min",
+                "tags": ["Vinyasa", "Toning"]
             },
             {
                 "id": "kYvH573n6v0",
                 "url": "https://www.youtube.com/watch?v=kYvH573n6v0",
                 "title": "Core Strength Ritual - Tone & Stabilize",
-                "description": "Tone your abdominal wall, support your spine, and improve core stability with slow, deliberate holds.",
+                "description": "Tone your abdominal wall, support your spine, and improve core stability with slow holds.",
                 "difficulty": "Intermediate",
-                "benefits": ["Builds strength", "Core stability", "High calorie burn"]
+                "benefits": ["Core stability", "Builds strength"],
+                "duration": "20 min",
+                "tags": ["Core", "Strength"]
             },
             {
                 "id": "UEEsdXn8oG8",
@@ -130,7 +186,9 @@ class YogaRecommendationEngine:
                 "title": "Morning Vinyasa Flow - Fat Burning",
                 "description": "An active morning cardio-yoga hybrid that speeds up digestion and enhances posture.",
                 "difficulty": "Intermediate",
-                "benefits": ["Boosts energy", "Tones core", "Builds strength"]
+                "benefits": ["Boosts energy", "Tones core"],
+                "duration": "20 min",
+                "tags": ["Morning", "Cardio"]
             }
         ],
         "neck pain": [
@@ -140,15 +198,19 @@ class YogaRecommendationEngine:
                 "title": "Yoga for Neck, Shoulders & Upper Back",
                 "description": "Melt away cervical tension and upper-body stiffness caused by screens and laptop slouching.",
                 "difficulty": "Beginner",
-                "benefits": ["Relieves stiffness", "Shoulder tension", "Chest opener"]
+                "benefits": ["Relieves stiffness", "Chest opener"],
+                "duration": "15 min",
+                "tags": ["Therapeutic", "Upper Body"]
             },
             {
                 "id": "761Vnrd7LwM",
                 "url": "https://www.youtube.com/watch?v=761Vnrd7LwM",
                 "title": "10 Min Quick Neck Stiffness Release",
-                "description": "Easy, sitting stretches that you can do directly from your office desk for quick relief.",
+                "description": "Easy sitting stretches you can do directly from your desk for quick relief.",
                 "difficulty": "Beginner",
-                "benefits": ["Relieves stiffness", "Quick tension relief", "Improves mobility"]
+                "benefits": ["Quick tension relief", "Improves mobility"],
+                "duration": "10 min",
+                "tags": ["Quick", "Office"]
             }
         ],
         "posture correction": [
@@ -158,7 +220,9 @@ class YogaRecommendationEngine:
                 "title": "Yoga for Better Posture & Alignment",
                 "description": "Lengthen the spine, pull back rounded shoulders, and activate stabilizing core muscles.",
                 "difficulty": "Beginner",
-                "benefits": ["Improves posture", "Shoulder tension", "Spinal decompression"]
+                "benefits": ["Improves posture", "Spinal decompression"],
+                "duration": "15 min",
+                "tags": ["Alignment", "Tutorial"]
             },
             {
                 "id": "8p25v4y9hEE",
@@ -166,7 +230,9 @@ class YogaRecommendationEngine:
                 "title": "10 Min Daily Stretch to Fix Hunchback",
                 "description": "Targeted active stretches designed to reverse office slouching and align pelvis.",
                 "difficulty": "Beginner",
-                "benefits": ["Improves posture", "Chest opener", "Builds strength"]
+                "benefits": ["Chest opener", "Builds strength"],
+                "duration": "10 min",
+                "tags": ["Quick", "Daily"]
             }
         ],
         "meditation yoga": [
@@ -176,7 +242,9 @@ class YogaRecommendationEngine:
                 "title": "Mindfulness Meditation & Seated Flow",
                 "description": "Coordinate slow pranayama breathing with stabilizing sitting poses to ground yourself.",
                 "difficulty": "Beginner",
-                "benefits": ["Deep relaxation", "Calms the mind", "Mental clarity"]
+                "benefits": ["Calms the mind", "Mental clarity"],
+                "duration": "15 min",
+                "tags": ["Mindfulness", "Breathing"]
             },
             {
                 "id": "6p_yaNFSYao",
@@ -184,7 +252,9 @@ class YogaRecommendationEngine:
                 "title": "10 Minute Quiet Breathing & Mindful Flow",
                 "description": "A peaceful vinyasa segment leading into quiet seated concentration and stillness.",
                 "difficulty": "Beginner",
-                "benefits": ["Deep relaxation", "Anxiety relief", "Mental clarity"]
+                "benefits": ["Anxiety relief", "Mental clarity"],
+                "duration": "10 min",
+                "tags": ["Peaceful", "Quiet"]
             }
         ]
     }
