@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="300" rx="28" fill="url(#g)"/>
+  <circle cx="380" cy="70" r="42" fill="#a78bfa" fill-opacity="0.25"/>
+  <circle cx="110" cy="90" r="30" fill="#f472b6" fill-opacity="0.18"/>
+  <rect x="150" y="120" width="180" height="90" rx="24" fill="#1f2937" fill-opacity="0.85"/>
+  <path d="M210 92 L240 52 L270 92" fill="none" stroke="#c084fc" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M205 112 L205 210" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <path d="M275 112 L275 210" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <text x="240" y="245" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#f5f3ff">Mountain Pose</text>
+</svg>

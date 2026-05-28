@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#0369a1"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="300" rx="28" fill="url(#g)"/>
+  <circle cx="380" cy="70" r="42" fill="#0ea5e9" fill-opacity="0.25"/>
+  <circle cx="110" cy="90" r="30" fill="#22d3ee" fill-opacity="0.18"/>
+  <rect x="130" y="80" width="220" height="130" rx="20" fill="#1f2937" fill-opacity="0.85"/>
+  <!-- Mat -->
+  <path d="M110 200 L370 200" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+  <!-- Legs split wide -->
+  <path d="M180 200 L240 110 L300 200" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Spine/Torso -->
+  <path d="M240 110 L280 130" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <!-- Arms extended vertically -->
+  <path d="M280 180 L280 80" stroke="#c084fc" stroke-width="6" stroke-linecap="round"/>
+  <!-- Head looking up -->
+  <circle cx="295" cy="115" r="14" fill="#f5f3ff"/>
+  <text x="240" y="255" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#f0f9ff">Triangle Pose</text>
+</svg>

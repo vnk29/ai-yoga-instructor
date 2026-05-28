@@ -1,152 +1,78 @@
 """
-Voice coach: plays spoken corrections via Gradium TTS.
-
-Architecture (mirrors faceguard)
----------------------------------
-- A background worker thread serialises all speech so clips never overlap.
-- Per-issue cooldowns prevent the same note from repeating too quickly.
-- The queue is capped at 1: if a clip is already queued, new alerts are dropped
-  rather than stacking up.
-- Gradium's async `tts()` is called via `asyncio.run()` inside the worker thread.
-- The resulting WAV bytes are saved to a temp file and played with `afplay`.
-- Requires GRADIUM_API_KEY to be set; raises RuntimeError on startup otherwise.
+Thread-safe, asynchronous voice coaching helper using pyttsx3 offline TTS engine.
+Designed specifically for Windows compatibility by managing COM threading safely.
 """
 
-import asyncio
-import os
-import queue
-import subprocess
-import tempfile
+import pyttsx3
 import threading
+import queue
 import time
-
-import gradium.client
-
-from config import GRADIUM_VOICE_ID
 
 
 class VoiceCoach:
-    """
-    Thread-safe voice alert manager backed exclusively by Gradium TTS.
-
-    Requires GRADIUM_API_KEY to be set in the environment; raises RuntimeError
-    at construction time if the key is absent or the client cannot be created.
-
-    Usage
-    -----
-    coach = VoiceCoach()
-    coach.alert("hip_low", "Tighten your core!", cooldown=4.0)
-    ...
-    coach.stop()
-    """
+    """Delivers speech coaching feedback on a daemon thread to prevent UI freezing."""
 
     def __init__(self) -> None:
-        self._gradium_client = self._init_gradium()
-        self._voice_id = GRADIUM_VOICE_ID or None
+        self.voice_queue = queue.Queue()
+        self.last_alert_time = {}
+        self.running = True
 
-        self._queue: queue.Queue[str | None] = queue.Queue(maxsize=1)
-        self._cooldowns: dict[str, float] = {}
-        self._lock = threading.Lock()
-
-        self._worker = threading.Thread(
-            target=self._run, daemon=True, name="voice-worker"
+        # Start the voice coaching daemon worker
+        self.worker_thread = threading.Thread(
+            target=self._voice_worker,
+            daemon=True
         )
-        self._worker.start()
+        self.worker_thread.start()
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _init_gradium() -> gradium.client.GradiumClient:
+    def _voice_worker(self) -> None:
         """
-        Create and return a Gradium client.  Raises RuntimeError if the API key
-        is missing or the client cannot be initialised.
+        Worker loop that listens for speech messages in the queue.
+        Initializes the pyttsx3 engine inside this thread to resolve Windows COM threading issues.
         """
-        api_key = os.environ.get("GRADIUM_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError(
-                "[VoiceCoach] GRADIUM_API_KEY is not set. "
-                "Export GRADIUM_API_KEY=<your-key> before running."
-            )
+        # Initialize engine inside the worker thread to bind it to this thread context (COM safety on Windows)
         try:
-            client = gradium.client.GradiumClient(api_key=api_key)
-            print("[VoiceCoach] Gradium TTS ready.")
-            return client
-        except Exception as exc:
-            raise RuntimeError(f"[VoiceCoach] Gradium init failed: {exc}") from exc
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 155)  # Slightly slower for optimal clarity
+            # Attempt to select a female voice if available, otherwise defaults
+            voices = engine.getProperty('voices')
+            if len(voices) > 1:
+                # Often index 1 is a female voice (e.g. Zira on Windows)
+                engine.setProperty('voice', voices[1].id)
+        except Exception as e:
+            print(f"[VOICE CORE] Error initializing pyttsx3: {e}")
+            engine = None
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        while self.running:
+            try:
+                # Wait for next alert message (blocking with timeout to allow graceful stop checks)
+                message = self.voice_queue.get(timeout=1.0)
+                if engine and message:
+                    engine.say(message)
+                    engine.runAndWait()
+                self.voice_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[VOICE CORE] Error in speech output: {e}")
 
-    def alert(self, issue_key: str, message: str, cooldown: float = 4.0) -> bool:
+    def alert(self, key: str, message: str, cooldown: float = 6.0) -> bool:
         """
-        Attempt to speak *message* if *issue_key* is not in cooldown.
-
-        Returns True if the message was queued, False if suppressed.
+        Enqueues a voice feedback suggestion if the cooldown period has expired for this key.
+        Prevents repeating the same correction too frequently.
         """
-        now = time.monotonic()
-        with self._lock:
-            if now - self._cooldowns.get(issue_key, 0.0) < cooldown:
-                return False
-            self._cooldowns[issue_key] = now
-        try:
-            self._queue.put_nowait(message)
+        current_time = time.time()
+
+        if key not in self.last_alert_time:
+            self.last_alert_time[key] = 0.0
+
+        if current_time - self.last_alert_time[key] > cooldown:
+            print(f"[VOICE ALERT] {message}")
+            self.voice_queue.put(message)
+            self.last_alert_time[key] = current_time
             return True
-        except queue.Full:
-            return False
+
+        return False
 
     def stop(self) -> None:
-        """Signal the worker to stop after the current clip finishes."""
-        try:
-            self._queue.put_nowait(None)
-        except queue.Full:
-            pass
-
-    # ------------------------------------------------------------------
-    # Worker
-    # ------------------------------------------------------------------
-
-    def _run(self) -> None:
-        while True:
-            item = self._queue.get()
-            if item is None:
-                break
-            self._speak(item)
-
-    def _speak(self, text: str) -> None:
-        try:
-            self._speak_gradium(text)
-        except Exception as exc:
-            print(f"[VoiceCoach] Gradium error (utterance skipped): {exc}")
-
-    # ------------------------------------------------------------------
-    # Gradium backend
-    # ------------------------------------------------------------------
-
-    def _speak_gradium(self, text: str) -> None:
-        """Call Gradium TTS, write the WAV to a temp file, play with afplay."""
-        setup = {
-            "model_name": "default",
-            "output_format": "wav",
-        }
-        if self._voice_id:
-            setup["voice_id"] = self._voice_id
-
-        result = asyncio.run(self._gradium_client.tts(setup=setup, text=text))
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(result.raw_data)
-            tmp_path = tmp.name
-
-        try:
-            subprocess.run(
-                ["afplay", tmp_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-        finally:
-            os.unlink(tmp_path)
-
+        """Stops the speech queue gracefully."""
+        self.running = False

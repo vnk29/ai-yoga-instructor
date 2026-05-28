@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#7c2d12"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="300" rx="28" fill="url(#g)"/>
+  <path d="M150 170 L330 170" stroke="#fb7185" stroke-width="6" stroke-linecap="round"/>
+  <path d="M190 170 L150 110" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <path d="M290 170 L330 110" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <path d="M235 110 L235 210" stroke="#c084fc" stroke-width="6" stroke-linecap="round"/>
+  <text x="240" y="245" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#fff1f2">Boat Pose</text>
+</svg>

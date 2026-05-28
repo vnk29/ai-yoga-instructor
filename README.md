@@ -1,145 +1,152 @@
-# Plank Posture AI Coach
+# AI Yoga Instructor using Computer Vision
 
-A local macOS desktop app that watches you hold a plank and gives real-time spoken corrections when your form breaks down. Everything runs on-device: MediaPipe Pose for skeleton tracking, and Gradium TTS for voice.
+A professional, fully local Windows-compatible Streamlit application that provides real-time yoga posture analysis, joint-angle alignment checks, and offline vocal corrections using computer vision.
 
+Everything runs completely on-device for maximum privacy: **MediaPipe Pose** for skeleton tracking, and **pyttsx3** for offline threaded text-to-speech coaching feedback.
 
-https://github.com/user-attachments/assets/ad97f2f0-e1ac-4f70-8333-96f31025cae1
+---
 
+## 🧘 Key Features
 
-## How it works
+1. **Live Yoga Mode:**
+   - Real-time webcam-based pose tracking and skeleton visualization.
+   - Intelligent detection of 5 major postures: **Tree Pose**, **Warrior II Pose**, **Cobra Pose**, **T Pose**, and **Mountain Pose**.
+   - Displays real-time pose name, alignment accuracy %, frame stability %, and coaching tips.
+2. **AI Voice Coaching:**
+   - Multi-threaded offline vocal corrections via `pyttsx3`.
+   - Advanced cooldown logic to prevent repetitive speech fatigue.
+3. **Advanced Posture Analysis:**
+   - High-precision joint-angle calculations (Spine, Hips, Shoulders, Knees, Arms) using NumPy geometry.
+4. **Image Upload Mode:**
+   - Upload any static yoga posture image (`jpg`/`png`) to analyze alignment and generate a visual diagnostics report.
+5. **Yoga Recommendation Mode:**
+   - Choose fitness targets (Stress, Back Pain, Flexibility, Weight Loss) and get custom, tailored yoga routines with biomechanical explanations.
+6. **Session Logging:**
+   - Tracks posture accuracy and duration metrics, automatically logging summaries locally to `session_log.json`.
 
-1. Captures frames from your camera via OpenCV.
-2. Runs **MediaPipe Pose Landmarker** to detect 33 body landmarks each frame.
-3. Computes three geometric checks against the detected skeleton:
-   - **Hip deviation** – how far your hips stray above/below the ideal shoulder-to-ankle line.
-   - **Head rise** – whether your nose is at or below shoulder level (neutral), raised (looking up), or severely drooped.
-   - **Body angle** – whether the body is roughly horizontal (in plank) or not.
-4. Requires a configurable number of consecutive bad frames before triggering an alert (avoids one-frame noise).
-5. Plays a spoken correction via **Gradium TTS**, then enforces a cooldown so the same note isn't repeated immediately.
-6. Cycles through all messages for a given issue before repeating.
-7. Saves a session summary to `session_log.json` on exit.
+---
 
-## Camera setup (important)
+## 💻 Tech Stack & Windows Compatibility
 
-For best results, place the camera **to your side at roughly torso height**, so your body is horizontal in the frame.
+- **Python 3.10+**
+- **MediaPipe:** For high-fidelity pose keypoint tracking.
+- **OpenCV:** For video capture, processing, and skeleton drawing.
+- **NumPy:** For vector calculations.
+- **Streamlit:** For a dark modern glassmorphism UI.
+- **pyttsx3:** Offline cross-platform voice synthesis (safe COM initialization for Windows threads).
 
-```
-     [Camera] ──────────────────────────────────────────>
-                HEAD ── SHOULDER ── HIP ── KNEE ── ANKLE
-```
+---
 
-- If you use a laptop camera, prop the laptop on its side or use a stand next to your mat.
-- Front-facing cameras will not work well because the hip-deviation check relies on a side view.
+## 🚀 Running on Windows
 
-## Posture checks
+### 1. Set Up Virtual Environment
 
-| Issue | Trigger | What you'll hear |
-|---|---|---|
-| **Hips too high** | Hip is above the shoulder–ankle line (pike) | "Bring those hips down…" |
-| **Hips sagging** | Hip is below the shoulder–ankle line | "Engage your core and lift them up…" |
-| **Head up** | Nose is significantly above shoulder level | "Lower your head, keep your neck neutral…" |
-| **Head down** | Nose is significantly below shoulder level | "Lift your head slightly…" |
-| **Not in plank** | Body angle > 30° from horizontal | "Get into plank position…" |
-| **Good form** | No issues detected for a sustained period | "Great form! Keep it up." |
+Open your terminal or PowerShell inside the project directory:
 
-## Sensitivity presets
-
-Head thresholds are split by direction: craning the neck up is always wrong (tight threshold), while looking slightly down is normal in a plank (lenient threshold).
-
-| Preset | Hip threshold | Head-up threshold | Head-down threshold | Consecutive frames | Cooldown |
-|---|---|---|---|---|---|
-| Low    | 0.04  | 0.05  | 0.18 | 12 | 6 s   |
-| Medium | 0.025 | 0.035 | 0.14 | 8  | 4 s   |
-| High   | 0.015 | 0.02  | 0.10 | 4  | 2.5 s |
-
-All thresholds are normalised by the shoulder-to-ankle body length, so they scale with how far you are from the camera.
-
-## Session log
-
-On exit, a summary is appended to `session_log.json`:
-
-```json
-{
-  "date": "2026-04-10T09:30:00",
-  "duration_seconds": 120.5,
-  "sensitivity": "medium",
-  "total_corrections": 14,
-  "corrections_by_type": {
-    "hip_low": 9,
-    "head_up": 5
-  },
-  "compliments": 2
-}
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-## Running locally
+### 2. Install Dependencies
 
-### Prerequisites
+Install the updated libraries directly:
 
-- macOS (uses `afplay` for audio)
-- Python 3.10+
-- A Gradium API key — get one at [gradium.ai](https://gradium.ai)
-- A camera positioned to your side at torso height (see [Camera setup](#camera-setup-important))
-
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/Haimantika/plank-posture.git
-cd plank-posture
-```
-
-### 2. Create a virtual environment (recommended)
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
-### 4. Set your Gradium API key
+### 3. Launch the Streamlit App
 
-```bash
-export GRADIUM_API_KEY=your-key-here
+Run the application locally:
+
+```powershell
+streamlit run app.py
 ```
 
-Add this line to your `~/.zshrc` (or `~/.bash_profile`) to avoid repeating it each session.
+The app will open automatically in your default browser at `http://localhost:8501`.
 
-### 5. Run
+---
 
-```bash
-bash run.sh
+## 📐 Supported Postures & Analysis
+
+| Posture | Checked Joints | Focus Areas |
+| :--- | :--- | :--- |
+| **Tree Pose** | Standing knee, bent knee, standing hip, arms angle | Balance, standing leg straightness, leg folding |
+| **Warrior II** | Front knee, back knee, arms alignment, vertical torso | Hip openings, horizontal arms, back leg tension |
+| **Cobra Pose** | Elbow angle, back arch hip angle, shoulders alignment | Spinal extension, relaxed shoulders, gentle lift |
+| **T Pose** | Arm horizontal extension, vertical spine alignment | Core balance, symmetrical horizontal reach |
+| **Mountain Pose** | Perfect vertical spine, arms active at sides | Core posture, pelvis alignment, neutral joints |
+
+---
+
+## 📂 Project Directory Structure
+
+```text
+AI-Yoga-Instructor/
+│
+├── app.py                      # Main Streamlit web application & pages routing
+├── yoga_analyzer.py            # NumPy angle computations & posture diagnostics logic
+├── pose_detector.py            # MediaPipe Tasks PoseLandmarker wrapper
+├── voice_coach.py              # Thread-safe offline pyttsx3 vocal alert engine
+├── recommendation_engine.py    # Rule-based wellness pose recommendations
+├── session_logger.py           # Session metrics collector & JSON storage
+├── config.py                   # Pose angle thresholds, voice logs, and parameters
+├── utils/
+│   └── ui_components.py        # Glassmorphic layout custom CSS & components
+├── uploads/                    # Temporary storage for uploaded images
+├── assets/                     # Custom assets directory
+└── requirements.txt            # Python dependencies configuration
 ```
 
-`run.sh` handles SSL certificate configuration for Gradium automatically. The MediaPipe pose model (~7 MB) will be downloaded on the first run.
+---
 
-Grant camera access if macOS prompts you (**System Settings → Privacy & Security → Camera**).
+## � Dataset Integration (Optional)
 
-> **Note:** The app will refuse to start if `GRADIUM_API_KEY` is not set.
+The application supports integration with the Kaggle yoga pose dataset for **improved pose detection accuracy** through dataset-derived statistics.
 
-## Keyboard controls (preview window must be focused)
+### Setup Instructions
 
-| Key | Action |
-|---|---|
-| `q` / `ESC` | Quit |
-| `d` | Toggle skeleton + debug overlay |
-| `p` | Pause / resume |
-| `1` | Sensitivity: low |
-| `2` | Sensitivity: medium (default) |
-| `3` | Sensitivity: high |
+1. **Download the Dataset:**
+   - Download the yoga pose dataset from Kaggle
+   - Extract it to the project directory as `dataset/` or any convenient location
 
-## File structure
+2. **Run the Dataset Setup Script:**
 
+```powershell
+python setup_dataset.py                           # Auto-detects dataset
+# OR
+python setup_dataset.py --dataset-dir "C:\path\to\dataset"
 ```
-main.py              – camera loop, key handling, visual overlay
-pose_detector.py     – MediaPipe Pose wrapper and landmark helpers
-posture_analyzer.py  – geometric plank checks, issue list construction
-voice_coach.py       – background thread, per-issue cooldowns, Gradium TTS
-session_logger.py    – session stats, JSON persistence
-config.py            – sensitivity presets, thresholds, voice messages
-run.sh               – launcher: sets SSL_CERT_FILE for Gradium, then runs main.py
+
+This script will:
+- Scan all pose images in the dataset
+- Extract MediaPipe landmarks using multi-stage preprocessing
+- Compute joint angle statistics per pose class
+- Generate `data/pose_stats.json` with confidence thresholds
+
+3. **Expected Dataset Structure:**
+
+```text
+dataset/
+├── train/
+│   ├── plank/
+│   ├── tree_pose/
+│   ├── warrior_2/
+│   ├── goddess_pose/
+│   └── downward_dog/
+└── test/
+    └── (same structure as train/)
 ```
+
+### Benefits
+
+✓ **Improved Accuracy:** Pose detection uses dataset-derived angle ranges and visibility thresholds
+✓ **Adaptive Detection:** Confidence thresholds auto-tune per pose class
+✓ **Better Upload Mode:** Enhanced preprocessing helps detect poses in sketches, illustrations, and low-quality photos
+
+---
+
+## �🔒 Privacy & Safety
+
+All pose estimations, camera frames, and vocal guides are computed locally on your CPU/GPU. No images or stream frames are sent to external web servers, keeping your workout fully private and secure.

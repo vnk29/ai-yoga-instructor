@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#7c2d12"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="300" rx="28" fill="url(#g)"/>
+  <path d="M150 130 C210 80, 270 80, 330 130" fill="none" stroke="#fbbf24" stroke-width="7" stroke-linecap="round"/>
+  <path d="M190 130 L150 210" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <path d="M290 130 L330 210" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
+  <path d="M235 98 L235 210" stroke="#c084fc" stroke-width="6" stroke-linecap="round"/>
+  <text x="240" y="245" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#fff7ed">Sun Salutation</text>
+</svg>

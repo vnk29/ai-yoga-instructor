@@ -135,18 +135,41 @@ class PoseDetector:
     # ------------------------------------------------------------------
 
     def draw_landmarks(self, frame_bgr, landmark_list: list) -> None:
-        """Overlay the pose skeleton onto a BGR frame (in-place)."""
-        self._du.draw_landmarks(
-            frame_bgr,
-            landmark_list,
-            self._Connections,
-            landmark_drawing_spec=self._du.DrawingSpec(
-                color=(50, 200, 50), thickness=2, circle_radius=3
-            ),
-            connection_drawing_spec=self._du.DrawingSpec(
-                color=(200, 200, 50), thickness=2
-            ),
-        )
+        """
+        Overlay the pose skeleton onto a BGR frame (in-place).
+        Note: MediaPipe drawing utilities work with RGB, but we accept BGR
+        for consistency with OpenCV. The drawing is done in-place.
+        """
+        try:
+            # Ensure frame is writable and has correct shape
+            if frame_bgr is None or frame_bgr.size == 0:
+                return
+            
+            if len(frame_bgr.shape) != 3 or frame_bgr.shape[2] != 3:
+                return
+            
+            # Convert BGR to RGB for drawing
+            import cv2 as cv2_module
+            frame_rgb = cv2_module.cvtColor(frame_bgr, cv2_module.COLOR_BGR2RGB)
+            
+            # Draw on RGB frame
+            self._du.draw_landmarks(
+                frame_rgb,
+                landmark_list,
+                self._Connections,
+                landmark_drawing_spec=self._du.DrawingSpec(
+                    color=(50, 200, 50), thickness=2, circle_radius=3
+                ),
+                connection_drawing_spec=self._du.DrawingSpec(
+                    color=(200, 200, 50), thickness=2
+                ),
+            )
+            
+            # Convert back to BGR and copy result to original frame
+            frame_bgr[:] = cv2_module.cvtColor(frame_rgb, cv2_module.COLOR_RGB2BGR)
+        except Exception as e:
+            print(f"[DRAW] Error drawing landmarks: {e}")
+            return
 
     # ------------------------------------------------------------------
     # Lifecycle
