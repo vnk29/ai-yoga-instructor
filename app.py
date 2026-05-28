@@ -12,6 +12,8 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 from pathlib import Path
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+import av
 
 # Core imports
 from yoga_config import CAMERA_INDEX, POSE_DATABASE
@@ -360,217 +362,131 @@ elif page == "Live Yoga Mode":
 
     with col_feed:
         st.markdown("### Webcam Feed")
-        frame_placeholder = st.empty()
-        
-        # Real-time indicators overlay
-        indicators_placeholder = st.empty()
-        
-        # Candidate pose scoring bar chart
-        chart_placeholder = st.empty()
 
-        if st.session_state.session_active:
-            cap = cv2.VideoCapture(CAMERA_INDEX)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        # Setup Video Processor for WebRTC
+        class YogaVideoProcessor(VideoTransformerBase):
+            def __init__(self):
+                # We need separate instances per connection to avoid thread issues
+                self.detector = PoseDetector()
+                self.analyzer = YogaAnalyzer()
+                self.voice_coach = VoiceCoach()
+                self.prev_time = time.monotonic()
+                self.fps = 30.0
+                
+                # Shared state inputs
+                self.selected_pose = "Auto-Detect"
+                self.voice_cooldown = 6.0
+                self.show_debug = True
 
-            if not cap.isOpened():
-                st.error("Error: Could not access the webcam. Check connection or camera index.")
-                st.session_state.session_active = False
-            else:
-                logger = st.session_state.session_logger
-                prev_time = time.monotonic()
-                fps = 30.0
-                frame_count = 0
+                # Hold timer state
+                self.pose_hold_start = None
+                self.pose_hold_time = 0.0
+                self.last_milestone_voiced = 0
 
-                try:
-                    while cap.isOpened() and st.session_state.session_active:
-                        ret, frame = cap.read()
-                        if not ret:
-                            st.warning("Failed to grab camera frame. Retrying...")
-                            continue
+            def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+                img = frame.to_ndarray(format="bgr24")
+                img = cv2.flip(img, 1)
+
+                now = time.monotonic()
+                self.fps = 0.9 * self.fps + 0.1 / max(now - self.prev_time, 1e-4)
+                self.prev_time = now
+
+                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                results = self.detector.process(rgb)
+
+                pose_name = "Auto-Detecting"
+                accuracy = 0.0
+                stability = 0.0
+                correction_text = "Aligning posture details..."
+
+                if results.pose_landmarks:
+                    lm_list = results.pose_landmarks[0]
+                    self.detector.draw_landmarks(img, lm_list)
+
+                    analysis = self.analyzer.analyze(self.detector, lm_list, self.selected_pose)
+                    
+                    pose_key_active = analysis["detected_pose"]
+                    accuracy = analysis["accuracy"]
+                    stability = analysis["stability"]
+                    
+                    if pose_key_active != "unknown":
+                        pose_name = POSE_DATABASE[pose_key_active]["display_name"]
+                        
+                        # Pose Hold Timer
+                        if accuracy >= 70.0:
+                            if self.pose_hold_start is None:
+                                self.pose_hold_start = time.monotonic()
+                            self.pose_hold_time = time.monotonic() - self.pose_hold_start
                             
-                        frame_count += 1
-
-                        # Mirror frame for intuitive interaction
-                        frame = cv2.flip(frame, 1)
-                        h, w = frame.shape[:2]
-
-                        # Calculate running FPS
-                        now = time.monotonic()
-                        fps = 0.9 * fps + 0.1 / max(now - prev_time, 1e-4)
-                        prev_time = now
-
-                        # MediaPipe processing
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        results = detector.process(rgb)
-
-                        accuracy = 0.0
-                        stability = 0.0
-                        pose_name = "Auto-Detecting"
-                        category_name = "Auto-Detecting"
-                        correction_text = "Aligning posture details..."
-                        entry_guidance = "Move fully into camera frame"
-                        candidate_scores = {}
-
-                        if results.pose_landmarks:
-                            lm_list = results.pose_landmarks[0]
-                            
-                            # Draw skeleton
-                            detector.draw_landmarks(frame, lm_list)
-
-                            # Performance Analysis
-                            analysis = analyzer.analyze(detector, lm_list, selected_pose)
-                            
-                            category_name = analysis["category"]
-                            pose_key_active = analysis["detected_pose"]
-                            accuracy = analysis["accuracy"]
-                            stability = analysis["stability"]
-                            entry_guidance = analysis["entry_guidance"]
-                            candidate_scores = analysis["candidate_scores"]
-                            
-                            if pose_key_active != "unknown":
-                                pose_name = POSE_DATABASE[pose_key_active]["display_name"]
-                                logger.record_accuracy(accuracy)
-                                
-                                # ---------------------------------------------------------
-                                # Pose Hold Timer Logic
-                                # ---------------------------------------------------------
-                                if accuracy >= 70.0:
-                                    if st.session_state.pose_hold_start is None:
-                                        st.session_state.pose_hold_start = time.monotonic()
-                                    st.session_state.pose_hold_time = time.monotonic() - st.session_state.pose_hold_start
-                                    
-                                    # Voice cues at milestones (e.g. 5s, 10s, 20s, 30s)
-                                    held_sec = int(st.session_state.pose_hold_time)
-                                    milestones = [5, 10, 20, 30, 45, 60]
-                                    for ms in milestones:
-                                        if held_sec >= ms and st.session_state.last_milestone_voiced < ms:
-                                            voice_coach.alert("milestone", f"Outstanding alignment, held for {ms} seconds!", cooldown=2.0)
-                                            st.session_state.last_milestone_voiced = ms
-                                            break
-                                else:
-                                    st.session_state.pose_hold_start = None
-                                    st.session_state.pose_hold_time = 0.0
-                                    st.session_state.last_milestone_voiced = 0
-                            else:
-                                pose_name = "Auto Detecting..."
-                                st.session_state.pose_hold_start = None
-                                st.session_state.pose_hold_time = 0.0
-                                st.session_state.last_milestone_voiced = 0
-
-                            # Handle prioritized voice alerts & coaching feedback
-                            if analysis["corrections"]:
-                                active_correction = analysis["corrections"][0]
-                                correction_text = active_correction["message"]
-                                
-                                # Voice Coaching Trigger with cooldown logic
-                                key = active_correction["key"]
-                                fired = voice_coach.alert(key, correction_text, cooldown=voice_cooldown)
-                                if fired:
-                                    if "perfect" not in key and key != "no_pose":
-                                        logger.record_correction(key)
-                            else:
-                                correction_text = "Good alignment! Maintain posture."
+                            held_sec = int(self.pose_hold_time)
+                            milestones = [5, 10, 20, 30, 45, 60]
+                            for ms in milestones:
+                                if held_sec >= ms and self.last_milestone_voiced < ms:
+                                    self.voice_coach.alert("milestone", f"Outstanding alignment, held for {ms} seconds!", cooldown=2.0)
+                                    self.last_milestone_voiced = ms
+                                    break
                         else:
-                            # Voice alert for no pose visible
-                            voice_coach.alert("no_pose", "Step fully into the camera view.", cooldown=12.0)
-                            correction_text = "No pose detected - step in front of the camera"
-                            st.session_state.pose_hold_start = None
-                            st.session_state.pose_hold_time = 0.0
-                            st.session_state.last_milestone_voiced = 0
+                            self.pose_hold_start = None
+                            self.pose_hold_time = 0.0
+                            self.last_milestone_voiced = 0
+                    else:
+                        pose_name = "Auto Detecting..."
+                        self.pose_hold_start = None
+                        self.pose_hold_time = 0.0
+                        self.last_milestone_voiced = 0
 
-                        # Dynamic stream layout (optimized: redraw every 3 frames to reduce lag)
-                        if frame_count % 3 == 0:
-                            indicators_html = f"""
-                            <div class="glass-card" style="margin-top: 1rem; border-color: rgba(139, 92, 246, 0.4);">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                                    <span style="font-size: 1.1rem; font-weight: 600; color: #c084fc;">Active Pose: {pose_name}</span>
-                                    <span style="background: rgba(255, 255, 255, 0.08); padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.8rem; color: #9ca3af; font-family: monospace;">FPS: {fps:.0f}</span>
-                                </div>
-                                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; text-align: center; margin-bottom: 0.75rem;">
-                                    <div style="background: rgba(17, 24, 39, 0.4); padding: 0.5rem; border-radius: 8px;">
-                                        <div style="font-size: 1.3rem; font-weight: 800; color: #c084fc; white-space:nowrap; overflow:hidden;">{category_name}</div>
-                                        <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase;">Category</div>
-                                    </div>
-                                    <div style="background: rgba(17, 24, 39, 0.4); padding: 0.5rem; border-radius: 8px;">
-                                        <div style="font-size: 1.4rem; font-weight: 800; color: #f472b6;">{accuracy:.0f}%</div>
-                                        <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase;">Confidence</div>
-                                    </div>
-                                    <div style="background: rgba(17, 24, 39, 0.4); padding: 0.5rem; border-radius: 8px;">
-                                        <div style="font-size: 1.4rem; font-weight: 800; color: #818cf8;">{stability:.0f}%</div>
-                                        <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase;">Stability</div>
-                                    </div>
-                                    <div style="background: rgba(17, 24, 39, 0.4); padding: 0.5rem; border-radius: 8px;">
-                                        <div style="font-size: 1.4rem; font-weight: 800; color: #10b981;">{st.session_state.pose_hold_time:.0f}s</div>
-                                        <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase;">Hold Time</div>
-                                    </div>
-                                </div>
-                                <div style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 0.5rem; margin-bottom: 0.5rem;">
-                                    <span style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase; display: block;">Guidance Instructions:</span>
-                                    <div style="color: #9ca3af; font-size: 0.9rem;">🧭 {entry_guidance}</div>
-                                </div>
-                                <div style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 0.5rem;">
-                                    <span style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase; display: block;">Coaching Feedback:</span>
-                                    <div style="color: #f3f4f6; font-size: 1.05rem; font-weight: 600;">🧘 {correction_text}</div>
-                                </div>
-                            </div>
-                            """
-                            indicators_placeholder.markdown(indicators_html, unsafe_allow_html=True)
+                    if analysis["corrections"]:
+                        active_correction = analysis["corrections"][0]
+                        correction_text = active_correction["message"]
+                        self.voice_coach.alert(active_correction["key"], correction_text, cooldown=self.voice_cooldown)
+                    else:
+                        correction_text = "Good alignment! Maintain posture."
+                else:
+                    self.voice_coach.alert("no_pose", "Step fully into the camera view.", cooldown=12.0)
+                    correction_text = "No pose detected - step in front of the camera"
+                    self.pose_hold_start = None
+                    self.pose_hold_time = 0.0
+                    self.last_milestone_voiced = 0
 
-                        # Render processed webcam frame to Streamlit empty spot
-                        frame_rgb_to_st = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        frame_placeholder.image(frame_rgb_to_st, channels="RGB", use_container_width=True)
+                # --- DRAW UI ON FRAME ---
+                h, w = img.shape[:2]
+                
+                # Top Bar Overlay
+                cv2.rectangle(img, (0, 0), (w, 40), (17, 24, 39), -1)
+                cv2.putText(img, f"Pose: {pose_name}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (252, 132, 192), 2)
+                cv2.putText(img, f"FPS: {int(self.fps)}", (w - 120, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (175, 163, 156), 2)
 
-                        # Render dynamic Leaderboard and Debug angles if toggled
-                        if show_debug and (frame_count % 3 == 0):
-                            debug_html = f"""
-                            <div class="glass-card" style="margin-top: 1rem; border-color: rgba(244, 114, 182, 0.25);">
-                                <h4 style="margin-top: 0; color: #f472b6; margin-bottom:0.75rem;">AI Diagnostics / Joint Angles Overlay</h4>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.85rem; color: #e5e7eb;">
-                            """
-                            if results.pose_landmarks and "angles" in analysis:
-                                for angle_label, val in analysis["angles"].items():
-                                    debug_html += f"<div><b>{angle_label}:</b> {val}°</div>"
-                            else:
-                                debug_html += "<div style='grid-column: 1 / span 2; color:#9ca3af;'>Waiting for active joint estimations...</div>"
-                            
-                            debug_html += "</div></div>"
-                            
-                            # Render Candidate Scores Distribution
-                            if candidate_scores:
-                                debug_html += f"""
-                                <div class="glass-card" style="margin-top: 1rem; border-color: rgba(129, 140, 248, 0.25);">
-                                    <h4 style="margin-top: 0; color: #818cf8; margin-bottom: 0.5rem;">Candidate Pose Scores ({category_name} Category)</h4>
-                                    <div style="font-size: 0.85rem; color: #e5e7eb;">
-                                """
-                                for c_name, score in candidate_scores.items():
-                                    debug_html += f"""
-                                    <div style="margin-bottom: 0.4rem;">
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.15rem;">
-                                            <span>{c_name}</span>
-                                            <b>{score:.0f}%</b>
-                                        </div>
-                                        <div style="background: rgba(255,255,255,0.05); height: 6px; border-radius: 3px;">
-                                            <div style="background: linear-gradient(90deg, #6366f1, #c084fc); width: {score}%; height: 6px; border-radius: 3px;"></div>
-                                        </div>
-                                    </div>
-                                    """
-                                debug_html += "</div></div>"
+                # Metrics Dashboard (Bottom Left)
+                dash_y = h - 140
+                cv2.rectangle(img, (0, dash_y), (350, h), (17, 24, 39), -1)
+                
+                cv2.putText(img, f"Confidence: {int(accuracy)}%", (15, dash_y + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (182, 114, 244), 2)
+                cv2.putText(img, f"Stability: {int(stability)}%", (15, dash_y + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (248, 140, 129), 2)
+                
+                timer_color = (129, 185, 16) if self.pose_hold_time > 0 else (175, 163, 156)
+                cv2.putText(img, f"Hold Time: {self.pose_hold_time:.1f}s", (15, dash_y + 105), cv2.FONT_HERSHEY_SIMPLEX, 0.8, timer_color, 2)
 
-                            chart_placeholder.markdown(debug_html, unsafe_allow_html=True)
-                        else:
-                            chart_placeholder.empty()
+                # Coaching Messages (Bottom Center-Right)
+                cv2.rectangle(img, (360, h - 60), (w, h), (30, 20, 40), -1)
+                cv2.putText(img, "AI Coach:", (370, h - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (175, 163, 156), 1)
+                cv2.putText(img, correction_text, (480, h - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (246, 244, 243), 2)
 
-                        time.sleep(0.01)  # tiny sleep to yield processor thread
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-                finally:
-                    cap.release()
-                    frame_placeholder.empty()
-                    indicators_placeholder.empty()
-                    chart_placeholder.empty()
-        else:
-            # Standby screen when webcam inactive
-            st.info("AI Coaching is currently offline. Press 'Start AI Coaching' above to open your camera.")
+
+        # Render WebRTC Streamer
+        ctx = webrtc_streamer(
+            key="yoga-stream",
+            video_processor_factory=YogaVideoProcessor,
+            rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+            media_stream_constraints={"video": True, "audio": False},
+        )
+
+        # Sync sidebar settings to processor
+        if ctx.video_processor:
+            ctx.video_processor.selected_pose = selected_pose
+            ctx.video_processor.voice_cooldown = voice_cooldown
+            ctx.video_processor.show_debug = show_debug
 
 # =========================================================================
 # PAGE: UPLOAD IMAGE MODE
@@ -813,22 +729,19 @@ elif page == "Yoga Recommendation Mode":
     st.markdown('<div class="rec-subtitle">Find yoga tutorials for wellness and fitness goals</div>', unsafe_allow_html=True)
 
     # --- Search Bar ---
-    if "rec_search_query" not in st.session_state:
-        st.session_state.rec_search_query = ""
+    if "rec_search_input" not in st.session_state:
+        st.session_state.rec_search_input = ""
 
     col_input, col_btn = st.columns([4, 1])
     with col_input:
         search_query = st.text_input(
             "Search your wellness goal",
-            value=st.session_state.rec_search_query,
             placeholder="e.g. stress relief, back pain, weight loss, flexibility...",
             label_visibility="collapsed",
             key="rec_search_input"
         )
     with col_btn:
         st.button("🔍 Search", use_container_width=True)
-
-    st.session_state.rec_search_query = search_query
 
     # --- Quick Suggestion Chips ---
     st.markdown("**💡 Quick Suggestions:**")
@@ -840,17 +753,19 @@ elif page == "Yoga Recommendation Mode":
         ("Neck Pain", "neck pain"),
         ("Beginner", "beginner yoga"),
     ]
+    
+    def set_search_query(val):
+        st.session_state.rec_search_input = val
+
     chip_cols = st.columns(len(suggestions))
     for idx, (label, search_val) in enumerate(suggestions):
         with chip_cols[idx]:
-            if st.button(label, key=f"suggest_{idx}", use_container_width=True):
-                st.session_state.rec_search_query = search_val
-                st.rerun()
+            st.button(label, key=f"suggest_{idx}", on_click=set_search_query, args=(search_val,), use_container_width=True)
 
     st.divider()
 
     # --- Results Section ---
-    query_text = st.session_state.rec_search_query.strip()
+    query_text = search_query.strip()
 
     if query_text:
         st.markdown(f"Results for '*{query_text}*'  &nbsp; **+ AI**", unsafe_allow_html=True)
@@ -892,8 +807,13 @@ elif page == "Yoga Recommendation Mode":
                         benefits_text = " · ".join(benefits) if benefits else ""
 
                         with cols[j]:
-                            # Embedded YouTube player via st.video
-                            st.video(video_url)
+                            # Embedded YouTube player via HTML iframe
+                            iframe_html = f'''
+                            <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 8px 8px 0 0;">
+                                <iframe src="https://www.youtube.com/embed/{parsed_id}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                            </div>
+                            '''
+                            st.markdown(iframe_html, unsafe_allow_html=True)
 
                             # Card body with title, badge, description, benefits, tags
                             card_html = f"""
