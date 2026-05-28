@@ -13,6 +13,7 @@ import streamlit as st
 from PIL import Image
 from pathlib import Path
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+import streamlit.components.v1 as components
 import av
 
 # Core imports
@@ -286,31 +287,8 @@ elif page == "Live Yoga Mode":
         # Debug Panel checkbox toggle
         show_debug = st.checkbox("Show AI Diagnostics Overlay", value=True)
 
-        # Toggle Button
-        if not st.session_state.session_active:
-            start_btn = st.button("Start AI Coaching")
-            if start_btn:
-                st.session_state.session_active = True
-                st.session_state.session_logger = SessionLogger(
-                    active_pose=selected_pose
-                )
-                st.session_state.pose_hold_start = None
-                st.session_state.pose_hold_time = 0.0
-                st.session_state.last_milestone_voiced = 0
-                st.rerun()
-        else:
-            # Place in a custom stop-btn container for styling
-            st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
-            stop_btn = st.button("Stop AI Coaching")
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            if stop_btn:
-                st.session_state.session_active = False
-                # Save session metrics
-                if "session_logger" in st.session_state:
-                    summary = st.session_state.session_logger.save()
-                    st.session_state.last_session_summary = summary
-                st.rerun()
+        # Info: WebRTC handles its own start/stop via the browser START button
+        st.info("👆 Click **START** on the video feed to open your camera. The browser will ask for camera permission.")
 
         # Render Active Metrics if session is running
         if st.session_state.session_active and "session_logger" in st.session_state:
@@ -474,21 +452,29 @@ elif page == "Live Yoga Mode":
                 return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
-        # Render WebRTC Streamer
+        # Render WebRTC Streamer with TURN relay fallback
+        RTC_CONFIG = RTCConfiguration({
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["stun:stun1.l.google.com:19302"]},
+                {
+                    "urls": [
+                        "turn:openrelay.metered.ca:80",
+                        "turn:openrelay.metered.ca:443",
+                        "turn:openrelay.metered.ca:443?transport=tcp",
+                    ],
+                    "username": "openrelayproject",
+                    "credential": "openrelayproject",
+                },
+            ]
+        })
+
         ctx = webrtc_streamer(
             key="yoga-stream",
             video_processor_factory=YogaVideoProcessor,
-            rtc_configuration=RTCConfiguration({
-                "iceServers": [
-                    {"urls": ["stun:stun.l.google.com:19302"]},
-                    {"urls": ["stun:stun1.l.google.com:19302"]},
-                    {"urls": ["stun:stun2.l.google.com:19302"]},
-                    {"urls": ["stun:stun3.l.google.com:19302"]},
-                    {"urls": ["stun:stun4.l.google.com:19302"]},
-                    {"urls": ["stun:stun.services.mozilla.com"]}
-                ]
-            }),
+            rtc_configuration=RTC_CONFIG,
             media_stream_constraints={"video": True, "audio": False},
+            async_processing=True,
         )
 
         # Sync sidebar settings to processor
@@ -816,13 +802,16 @@ elif page == "Yoga Recommendation Mode":
                         benefits_text = " · ".join(benefits) if benefits else ""
 
                         with cols[j]:
-                            # Embedded YouTube player via HTML iframe
-                            iframe_html = f'''
-                            <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 8px 8px 0 0;">
-                                <iframe src="https://www.youtube.com/embed/{parsed_id}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                            # Embedded YouTube player via components.html (bypasses Streamlit's iframe sanitizer)
+                            yt_embed_html = f'''
+                            <div style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px 8px 0 0;">
+                                <iframe src="https://www.youtube.com/embed/{parsed_id}"
+                                    style="position:absolute;top:0;left:0;width:100%;height:100%;border:none;"
+                                    allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture"
+                                    allowfullscreen></iframe>
                             </div>
                             '''
-                            st.markdown(iframe_html, unsafe_allow_html=True)
+                            components.html(yt_embed_html, height=200)
 
                             # Card body with title, badge, description, benefits, tags
                             card_html = f"""
