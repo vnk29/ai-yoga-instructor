@@ -25,6 +25,7 @@ from session_logger import SessionLogger
 from utils.ui_components import apply_premium_styles, render_title_section, draw_card
 from utils.image_preprocessor import ImagePreprocessor
 from utils.pose_statistics import load_statistics
+from yoga_similarity_engine import PoseSimilarityEngine
 
 # Initialize directories
 os.makedirs("uploads", exist_ok=True)
@@ -169,12 +170,17 @@ def get_yoga_analyzer():
     return YogaAnalyzer()
 
 @st.cache_resource
+def get_similarity_engine():
+    return PoseSimilarityEngine()
+
+@st.cache_resource
 def get_voice_coach():
     return VoiceCoach()
 
 detector = get_pose_detector()
 upload_detector = get_upload_pose_detector()
 analyzer = get_yoga_analyzer()
+similarity_engine = get_similarity_engine()
 voice_coach = get_voice_coach()
 
 # --- Sidebar Navigation ---
@@ -605,60 +611,99 @@ elif page == "Upload Image Mode":
                     
                     if target_results and target_results.pose_landmarks:
                         try:
-                            analysis = analyzer.analyze(upload_detector, target_results.pose_landmarks[0], None, is_static=True)
+                            # 1. Landmark Quality & Visibility Check
+                            lm_list = target_results.pose_landmarks[0].landmark
                             
-                            # Display metrics
-                            col_m1, col_m2 = st.columns(2)
-                            with col_m1:
-                                st.metric("Confidence", f"{analysis['confidence']:.1f}%")
-                            with col_m2:
-                                st.metric("Stability", f"{analysis['stability']:.1f}%")
+                            vis_scores = []
+                            core_joints = [
+                                upload_detector.mp_pose.PoseLandmark.LEFT_SHOULDER,
+                                upload_detector.mp_pose.PoseLandmark.RIGHT_SHOULDER,
+                                upload_detector.mp_pose.PoseLandmark.LEFT_HIP,
+                                upload_detector.mp_pose.PoseLandmark.RIGHT_HIP,
+                                upload_detector.mp_pose.PoseLandmark.LEFT_KNEE,
+                                upload_detector.mp_pose.PoseLandmark.RIGHT_KNEE,
+                                upload_detector.mp_pose.PoseLandmark.LEFT_ANKLE,
+                                upload_detector.mp_pose.PoseLandmark.RIGHT_ANKLE
+                            ]
+                            for joint in core_joints:
+                                vis_scores.append(lm_list[joint.value].visibility)
                             
-                            if analysis.get("is_low_confidence", False):
-                                st.warning("⚠ Pose Uncertain — confidence below threshold")
+                            avg_visibility = sum(vis_scores) / len(vis_scores) if vis_scores else 0
                             
-                            detected = analysis['detected_pose']
-                            if detected != 'unknown':
-                                display = POSE_DATABASE.get(detected, {}).get('display_name', detected)
-                                st.success(f"**Detected Pose:** {display}")
+                            if avg_visibility < 0.50:
+                                st.error("Image quality insufficient for accurate pose detection")
+                                st.info(f"Landmark visibility score: {avg_visibility:.2f} (Minimum required: 0.50)")
+                                st.write("Please upload a clearer image where the full body is visible.")
                             else:
-                                st.info("**Detected Pose:** Pose Uncertain")
-                            
-                            st.write(f"**Category:** {analysis['category']}")
-                            if analysis.get('category_reason'):
-                                st.caption(f"Reason: {analysis['category_reason']}")
-                            
-                            # Debug Panel: Top Candidate Poses
-                            candidate_scores = analysis.get("candidate_scores", {})
-                            if candidate_scores:
-                                st.markdown("**✅ Accepted Candidate Poses:**")
+                                # 2. Extract features using existing primitives
+                                c = analyzer._extract_coords(upload_detector, target_results.pose_landmarks[0])
+                                ac = analyzer._build_angle_cache(c)
+                                o = analyzer._compute_orientation(c, ac)
+                                
+                                # 3. Category-First Classification
+                                detected_category, cat_conf, cat_reason = analyzer.classify_category(c, ac, o)
+                                
+                                # 4. Dataset-Assisted Pose Similarity Engine
+                                candidate_scores, candidate_details = similarity_engine.evaluate_image(detected_category, c, ac, o)
+                                
+                                # Sort candidates by confidence
                                 sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                                for pose_name, score in sorted_candidates[:5]:
-                                    st.write(f"- {pose_name} → {score:.1f}%")
-                            
-                            # Debug Panel: Rejected Poses
-                            rejected = analysis.get("rejected_poses", {})
-                            if rejected:
-                                with st.expander("🚫 Rejected Poses (Hard Filter)"):
-                                    for pose_name, reasons in rejected.items():
-                                        st.write(f"**{pose_name}:**")
-                                        for r in reasons:
-                                            st.write(f"  • {r}")
-                            
-                            # Body Orientation Metrics
-                            orientation = analysis.get("orientation", {})
-                            if orientation:
-                                with st.expander("📐 Body Orientation Metrics"):
-                                    st.json(orientation)
-                            
-                            if analysis.get("angles"):
-                                with st.expander("🦴 Joint Angles"):
-                                    st.json(analysis["angles"])
-                            
-                            if analysis.get("corrections"):
-                                st.write("**Corrections:**")
-                                for correction in analysis["corrections"][:3]:
-                                    st.write(f"• {correction['message']}")
+                                
+                                # Determine best pose
+                                best_pose = "unknown"
+                                best_score = 0.0
+                                if sorted_candidates:
+                                    best_pose, best_score = sorted_candidates[0]
+                                    
+                                is_low_confidence = best_score < 65.0
+                                
+                                # 5. Interactive UI Display
+                                col_m1, col_m2 = st.columns(2)
+                                with col_m1:
+                                    st.metric("Top Confidence", f"{best_score:.1f}%")
+                                with col_m2:
+                                    st.metric("Visibility Score", f"{avg_visibility * 100:.1f}%")
+                                
+                                from yoga_similarity_engine import POSE_SIGNATURES
+                                if is_low_confidence:
+                                    st.warning("⚠ Pose Uncertain — confidence below threshold")
+                                    st.info("**Detected Pose:** Pose Uncertain")
+                                else:
+                                    display = POSE_SIGNATURES.get(best_pose, {}).get('display_name', best_pose.replace('_', ' ').title())
+                                    st.success(f"**Detected Pose:** {display}")
+                                
+                                st.write(f"**Body Category:** {detected_category}")
+                                if cat_reason:
+                                    st.caption(f"Reason: {cat_reason}")
+                                
+                                # Debug Panel: Top 3 Candidate Poses
+                                if sorted_candidates:
+                                    st.markdown("**✅ Top 3 Candidate Poses:**")
+                                    for pose_name, score in sorted_candidates[:3]:
+                                        display_name = POSE_SIGNATURES.get(pose_name, {}).get('display_name', pose_name.replace('_', ' ').title())
+                                        st.write(f"- {display_name} → {score:.1f}%")
+                                
+                                # Debug Panel: Matched & Failed Features
+                                if best_pose != "unknown":
+                                    with st.expander(f"🔍 Feature Breakdown: {best_pose.replace('_', ' ').title()}"):
+                                        details = candidate_details.get(best_pose, {})
+                                        if details.get("matched"):
+                                            st.markdown("**Matched Features (Dataset Stats):**")
+                                            for m in details.get("matched", []):
+                                                st.write(f"🟢 {m}")
+                                        if details.get("failed"):
+                                            st.markdown("**Failed Features:**")
+                                            for f in details.get("failed", []):
+                                                st.write(f"🔴 {f}")
+                                                
+                                # Debug Panel: Orientation Metrics
+                                if o:
+                                    with st.expander("📐 Body Orientation Metrics"):
+                                        st.json(o)
+                                
+                                if ac:
+                                    with st.expander("🦴 Joint Angles"):
+                                        st.json(ac)
                         except Exception as e:
                             st.warning(f"Analysis error: {str(e)}")
                     else:

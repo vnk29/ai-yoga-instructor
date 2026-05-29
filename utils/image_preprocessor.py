@@ -46,14 +46,20 @@ class ImagePreprocessor:
         ], dtype=np.float32)
         return cv2.filter2D(img, -1, kernel)
 
+    @staticmethod
+    def apply_denoise(img: np.ndarray) -> np.ndarray:
+        """Applies Fast Non-Local Means Denoising to reduce sensor noise in low-light images."""
+        return cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 21)
+
     @classmethod
     def run_detection_pipeline(cls, image_source, detector) -> tuple[bool, np.ndarray, str, any, np.ndarray]:
         """
-        Executes a 4-stage preprocessing and detection retry pipeline:
+        Executes a 5-stage preprocessing and detection retry pipeline:
         1. Stage 1: Base Preprocessed (Resized, RGB, Normalized)
         2. Stage 2: Adaptive Contrast Enhanced (CLAHE)
-        3. Stage 3: Edge Sharpened
-        4. Stage 4: Combined Contrast + Edge Sharpened
+        3. Stage 3: Denoised (FastNlMeans)
+        4. Stage 4: Edge Sharpened
+        5. Stage 5: Combined (Denoised + CLAHE + Sharpened)
         
         Returns:
             success (bool): Whether landmarks were successfully detected.
@@ -89,6 +95,12 @@ class ImagePreprocessor:
             except Exception as e:
                 print(f"[PREPROCESS] CLAHE failed: {e}, using normalized image")
                 img_clahe = img_normalized
+                
+            try:
+                img_denoised = cls.apply_denoise(img_normalized)
+            except Exception as e:
+                print(f"[PREPROCESS] Denoising failed: {e}, using normalized image")
+                img_denoised = img_normalized
             
             try:
                 img_sharpened = cls.apply_sharpen(img_normalized)
@@ -97,7 +109,8 @@ class ImagePreprocessor:
                 img_sharpened = img_normalized
             
             try:
-                img_combined = cls.apply_sharpen(img_clahe)
+                # Most intense processing: Denoise -> CLAHE -> Sharpen
+                img_combined = cls.apply_sharpen(cls.apply_clahe(img_denoised))
             except Exception as e:
                 print(f"[PREPROCESS] Combined filtering failed: {e}, using CLAHE image")
                 img_combined = img_clahe
@@ -105,8 +118,9 @@ class ImagePreprocessor:
             stages = [
                 ("Stage 1: Base Normalization", img_normalized),
                 ("Stage 2: Adaptive Contrast (CLAHE)", img_clahe),
-                ("Stage 3: Edge Sharpening", img_sharpened),
-                ("Stage 4: Contrast + Edge Sharpening", img_combined)
+                ("Stage 3: Noise Reduction", img_denoised),
+                ("Stage 4: Edge Sharpening", img_sharpened),
+                ("Stage 5: Combined Enhancement", img_combined)
             ]
 
             # Retry detection loop
