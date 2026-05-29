@@ -645,6 +645,16 @@ elif page == "Upload Image Mode":
 
                                 o = analyzer._compute_orientation(c, ac)
                                 
+                                # Ensure all expected keys are in o with sensible defaults to prevent KeyError/TypeError in any cached/stale modules
+                                if o.get("shoulder_x_spread") is None:
+                                    o["shoulder_x_spread"] = 0.15
+                                if o.get("knee_x_spread") is None:
+                                    o["knee_x_spread"] = 0.1
+                                if o.get("torso_slope") is None:
+                                    o["torso_slope"] = 90.0
+                                if o.get("aspect_ratio") is None:
+                                    o["aspect_ratio"] = 1.5
+                                    
                                 # 3. Category-First Classification
                                 cat_result = analyzer.classify_category(c, ac, o)
                                 detected_category = cat_result[0]
