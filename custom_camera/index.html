@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Streamlit Custom Camera</title>
+    <style>
+      body { 
+        margin: 0; 
+        padding: 0; 
+        display: flex; 
+        flex-direction: column; 
+        align-items: center; 
+        background: transparent; 
+        font-family: sans-serif; 
+      }
+      .video-container {
+        position: relative;
+        width: 100%;
+        max-width: 640px;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 2px solid #8b5cf6;
+        background: #111827;
+      }
+      video { 
+        width: 100%; 
+        transform: scaleX(-1); /* Mirror effect */
+        display: block;
+      }
+      canvas { display: none; }
+      .controls { 
+        margin-top: 15px; 
+      }
+      button { 
+        padding: 10px 20px; 
+        background: #8b5cf6; 
+        color: white; 
+        border: none; 
+        border-radius: 6px; 
+        cursor: pointer; 
+        font-size: 16px;
+        font-weight: 600;
+        transition: background 0.2s;
+      }
+      button:hover { background: #7c3aed; }
+      button.active { background: #ef4444; }
+      button.active:hover { background: #dc2626; }
+    </style>
+  </head>
+  <body>
+    <div class="video-container">
+      <video id="video" autoplay playsinline></video>
+    </div>
+    <canvas id="canvas"></canvas>
+    
+    <div class="controls">
+      <button id="toggleBtn">Start Live Camera</button>
+    </div>
+    
+    <script>
+      // ----------------------------------------------------
+      // Streamlit Custom Component Boilerplate
+      // ----------------------------------------------------
+      function sendMessageToStreamlitClient(type, data) {
+        const outData = Object.assign({
+          isStreamlitMessage: true,
+          type: type,
+        }, data);
+        window.parent.postMessage(outData, "*");
+      }
+
+      function init() {
+        sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1});
+      }
+
+      function setFrameHeight(height) {
+        sendMessageToStreamlitClient("streamlit:setFrameHeight", {height: height});
+      }
+
+      function sendDataToPython(data) {
+        sendMessageToStreamlitClient("streamlit:setComponentValue", {value: data});
+      }
+
+      window.addEventListener("message", function(event) {
+        if (event.data.type === "streamlit:render") {
+          // Adjust iframe height automatically
+          setFrameHeight(document.body.scrollHeight + 20);
+        }
+      });
+
+      // ----------------------------------------------------
+      // Camera App Logic
+      // ----------------------------------------------------
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const toggleBtn = document.getElementById('toggleBtn');
+      
+      let stream = null;
+      let captureInterval = null;
+      let isPlaying = false;
+
+      toggleBtn.addEventListener('click', async () => {
+        if (!isPlaying) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+            video.srcObject = stream;
+            isPlaying = true;
+            toggleBtn.textContent = "Stop Camera";
+            toggleBtn.classList.add('active');
+            
+            // Start capturing frames every 400ms (2.5 FPS)
+            captureInterval = setInterval(() => {
+              if (video.videoWidth) {
+                // Resize canvas to match video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                // Draw current video frame to canvas
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Export as highly compressed JPEG to prevent Websocket overload
+                const base64Data = canvas.toDataURL('image/jpeg', 0.6);
+                
+                // Send base64 string to Streamlit backend
+                sendDataToPython(base64Data);
+              }
+            }, 400);
+
+          } catch (err) {
+            console.error("Camera access denied:", err);
+            toggleBtn.textContent = "Camera Permission Denied";
+            toggleBtn.style.background = "#ef4444";
+          }
+        } else {
+          // Stop stream
+          if (stream) stream.getTracks().forEach(track => track.stop());
+          clearInterval(captureInterval);
+          isPlaying = false;
+          toggleBtn.textContent = "Start Live Camera";
+          toggleBtn.classList.remove('active');
+          
+          // Send null to clear backend state
+          sendDataToPython(null);
+        }
+      });
+
+      // Tell Streamlit we are ready!
+      init();
+    </script>
+  </body>
+</html>
