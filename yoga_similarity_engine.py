@@ -78,12 +78,12 @@ POSE_SIGNATURES = {
         "category": "Standing",
         "angles": {
             "left_knee": 180, "right_knee": 180,
-            "front_hip": 90,
-            "back_hip": 135,
+            "bent_hip": 80,   # Front hip flexed
+            "straight_hip": 150, # Back hip extended
             "left_arm": 180, "right_arm": 180,
             "arms_spread": 180 # Arms form a straight line
         },
-        "torso_slope": 45, # Torso is leaning
+        "torso_slope": 30, # Torso is leaning heavily
         "aspect_ratio_min": 0.8,
         "limb_ratios": {}
     },
@@ -130,10 +130,10 @@ POSE_SIGNATURES = {
         "category": "Prone",
         "angles": {
             "left_knee": 180, "right_knee": 180,
-            "left_hip": 160, "right_hip": 160,
-            "left_arm": 160, "right_arm": 160
+            "left_hip": 150, "right_hip": 150,
+            "left_arm": 150, "right_arm": 150
         },
-        "torso_slope": 30, # Torso raised slightly
+        "torso_slope": 45, # Torso raised significantly
         "aspect_ratio_min": 0.3, # Very wide, low height
         "limb_ratios": {}
     },

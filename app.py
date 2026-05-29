@@ -18,6 +18,12 @@ import streamlit.components.v1 as components
 # Core imports
 from yoga_config import CAMERA_INDEX, POSE_DATABASE
 from pose_detector import PoseDetector
+import yoga_analyzer
+import yoga_similarity_engine
+import importlib
+importlib.reload(yoga_analyzer)
+importlib.reload(yoga_similarity_engine)
+
 from yoga_analyzer import YogaAnalyzer
 from voice_coach import VoiceCoach
 from recommendation_engine import YogaRecommendationEngine

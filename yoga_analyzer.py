@@ -286,12 +286,14 @@ class YogaAnalyzer:
 
         # --- 2. PRONE: torso clearly horizontal + hips near lowest point ---
         # Critical: shoulders must be ABOVE hips (in image: shoulder_y < hip_y)
-        if torso_horizontal and o["shoulder_y"] < o["hip_y"]:
+        if o["shoulder_y"] < o["hip_y"]:
             if o["hip_floor_ratio"] < 0.18:
-                reasons.append(f"torso horizontal (slope={o['torso_slope']:.0f}°)")
-                reasons.append(f"hips near floor (ratio={o['hip_floor_ratio']:.3f})")
-                reasons.append(f"shoulders above hips in frame")
-                return "Prone", 85.0, "; ".join(reasons)
+                # Torso can be horizontal, OR torso can be arched back (Cobra) up to 65 degrees
+                if torso_horizontal or (not knees_folded and o["torso_slope"] < 65.0):
+                    reasons.append(f"torso slope={o['torso_slope']:.0f}°")
+                    reasons.append(f"hips near floor (ratio={o['hip_floor_ratio']:.3f})")
+                    reasons.append(f"shoulders above hips in frame")
+                    return "Prone", 85.0, "; ".join(reasons)
 
         # --- 3. BACKBEND: special body shapes ---
         # Bridge: shoulders near floor, hips elevated above shoulders, knees bent
