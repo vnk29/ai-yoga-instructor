@@ -189,12 +189,12 @@ class PoseSimilarityEngine:
 
         # 1. Extract dynamic features from the image to match against symmetric signatures
         img_features = {
-            "max_knee": max(ac["left_knee"], ac["right_knee"]),
-            "min_knee": min(ac["left_knee"], ac["right_knee"]),
-            "max_hip": max(ac["left_hip"], ac["right_hip"]),
-            "min_hip": min(ac["left_hip"], ac["right_hip"]),
-            "arms_spread": ac["left_shoulder_angle"] + ac["right_shoulder_angle"],
-            "knee_to_shoulder_spread": (o["knee_x_spread"] / (o["shoulder_x_spread"] + 1e-6))
+            "max_knee": max(ac.get("left_knee", 180.0), ac.get("right_knee", 180.0)),
+            "min_knee": min(ac.get("left_knee", 180.0), ac.get("right_knee", 180.0)),
+            "max_hip": max(ac.get("left_hip", 180.0), ac.get("right_hip", 180.0)),
+            "min_hip": min(ac.get("left_hip", 180.0), ac.get("right_hip", 180.0)),
+            "arms_spread": ac.get("left_shoulder_angle", 30.0) + ac.get("right_shoulder_angle", 30.0),
+            "knee_to_shoulder_spread": (o.get("knee_x_spread", 0.1) / (o.get("shoulder_x_spread", 0.15) + 1e-6))
         }
 
         # 2. Iterate through all supported poses
@@ -250,27 +250,27 @@ class PoseSimilarityEngine:
         # 2. Torso Orientation Similarity (Weight: 20%)
         # Slope can vary heavily depending on camera angle, so we use a loose sigma of 30.0
         target_slope = signature["torso_slope"]
-        slope_sim = self.gaussian_similarity(o["torso_slope"], target_slope, sigma=30.0)
+        slope_sim = self.gaussian_similarity(o.get("torso_slope", 90.0), target_slope, sigma=30.0)
         weighted_sum += slope_sim * 20.0
         total_weight += 20.0
-        label = f"torso_slope: {o['torso_slope']:.1f}° (target: {target_slope}°)"
+        label = f"torso_slope: {o.get('torso_slope', 90.0):.1f}° (target: {target_slope}°)"
         if slope_sim > 0.6: details["matched"].append(label)
         else: details["failed"].append(label)
 
         # 3. Body Geometry & Aspect Ratio (Weight: 10%)
         # Aspect ratios vary significantly between thin/wide bodies
         target_ar = signature["aspect_ratio_min"]
-        ar_sim = self.gaussian_similarity(o["aspect_ratio"], target_ar, sigma=1.5)
+        ar_sim = self.gaussian_similarity(o.get("aspect_ratio", 1.5), target_ar, sigma=1.5)
         weighted_sum += ar_sim * 10.0
         total_weight += 10.0
-        label = f"aspect_ratio: {o['aspect_ratio']:.2f} (target: {target_ar:.1f})"
+        label = f"aspect_ratio: {o.get('aspect_ratio', 1.5):.2f} (target: {target_ar:.1f})"
         if ar_sim > 0.6: details["matched"].append(label)
         else: details["failed"].append(label)
 
         # 4. Limb Ratios (Weight: 10%)
         for ratio_name, target_ratio in signature["limb_ratios"].items():
             if ratio_name == "knee_to_shoulder_spread":
-                val = img["knee_to_shoulder_spread"]
+                val = img.get("knee_to_shoulder_spread", 1.0)
                 sim = self.gaussian_similarity(val, target_ratio, sigma=0.8)
                 weighted_sum += sim * 10.0
                 total_weight += 10.0
