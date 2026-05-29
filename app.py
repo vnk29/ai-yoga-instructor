@@ -413,7 +413,7 @@ elif page == "Live Yoga Mode":
             
             # Render the component and capture the base64 string
             overlay_data = st.session_state.get('live_overlay', {})
-            base64_img = _component_func(key="websocket_camera", default=None, overlay=overlay_data)
+            base64_img = _component_func(key="websocket_camera", default=None, overlay=overlay_data, height=600)
 
             if base64_img is not None and base64_img.startswith('data:image'):
                 # Decode image from base64

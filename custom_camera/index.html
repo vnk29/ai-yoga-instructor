@@ -207,7 +207,7 @@
 
       window.addEventListener("message", function(event) {
         if (event.data.type === "streamlit:render") {
-          setFrameHeight(document.body.scrollHeight + 20);
+          // Frame height is now fixed from the Python side
           
           // Read overlay data passed from Python
           if (event.data.args && event.data.args.overlay) {
