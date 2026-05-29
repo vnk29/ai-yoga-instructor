@@ -272,6 +272,10 @@ elif page == "Live Yoga Mode":
         st.session_state.live_last_stability = 0.0
     if "live_last_corrections" not in st.session_state:
         st.session_state.live_last_corrections = []
+    if "live_session_logger" not in st.session_state:
+        st.session_state.live_session_logger = None
+    if "live_session_summary" not in st.session_state:
+        st.session_state.live_session_summary = None
 
     # ── Layout ──────────────────────────────────────────────────────────
     col_ctrl, col_feed = st.columns([1, 2.2])
@@ -281,7 +285,8 @@ elif page == "Live Yoga Mode":
 
         selected_pose = st.selectbox(
             "Target Posture",
-            ["Auto-Detect"] + [data["display_name"] for data in POSE_DATABASE.values()]
+            ["Auto-Detect"] + [data["display_name"] for data in POSE_DATABASE.values()],
+            disabled=st.session_state.live_active
         )
 
         show_debug = st.checkbox("Show Diagnostics", value=True)
@@ -296,13 +301,20 @@ elif page == "Live Yoga Mode":
                 st.session_state.live_pose_hold_time = 0.0
                 st.session_state.live_best_accuracy = 0.0
                 st.session_state.live_total_frames = 0
+                st.session_state.live_session_logger = SessionLogger(selected_pose)
+                st.session_state.live_session_summary = None
                 st.rerun()
         else:
             if st.button("⏹️ Stop Session", use_container_width=True):
                 st.session_state.live_active = False
+                if st.session_state.live_session_logger:
+                    st.session_state.live_session_summary = st.session_state.live_session_logger.save()
+                    st.session_state.live_session_logger = None
                 st.rerun()
 
-        if st.session_state.live_active:
+        if st.session_state.live_active and st.session_state.live_session_logger:
+            logger = st.session_state.live_session_logger
+            
             # Live metrics sidebar
             st.markdown("#### 📊 Live Metrics")
 
@@ -311,6 +323,12 @@ elif page == "Live Yoga Mode":
             hold = st.session_state.live_pose_hold_time
             best = st.session_state.live_best_accuracy
             frames = st.session_state.live_total_frames
+            corrections_cnt = logger.total_corrections
+            
+            # Format session duration
+            sess_dur = int(logger.duration)
+            mins, secs = divmod(sess_dur, 60)
+            duration_str = f"{mins:02d}:{secs:02d}"
 
             acc_color = "#10b981" if acc >= 70 else "#f59e0b" if acc >= 40 else "#ef4444"
             hold_color = "#10b981" if hold > 0 else "#9ca3af"
@@ -330,20 +348,41 @@ elif page == "Live Yoga Mode":
                 <div style="font-size:0.7rem; color:#9ca3af; text-transform:uppercase; letter-spacing:1px;">Hold Time</div>
                 <div style="font-size:2rem; font-weight:800; color:{hold_color}; font-family:monospace;">{hold:.1f}s</div>
             </div>
-            <div style="margin-top:0.75rem; color:#9ca3af; font-size:0.8rem;">
-                🏆 Best: <b style="color:#e5e7eb;">{best:.0f}%</b> &nbsp;|&nbsp; 📸 Frames: <b style="color:#e5e7eb;">{frames}</b>
+            <div style="margin-top:0.75rem; color:#9ca3af; font-size:0.8rem; display:flex; justify-content:space-between;">
+                <span>⏱️ Session: <b style="color:#e5e7eb;">{duration_str}</b></span>
+                <span>🏆 Best: <b style="color:#e5e7eb;">{best:.0f}%</b></span>
+                <span>🔧 Corrections: <b style="color:#e5e7eb;">{corrections_cnt}</b></span>
             </div>
             """, unsafe_allow_html=True)
 
             # Corrections panel
+            st.markdown("#### 🧘 AI Coaching")
             if st.session_state.live_last_corrections:
-                st.markdown("#### 🧘 AI Coaching")
                 for i, corr in enumerate(st.session_state.live_last_corrections[:3]):
                     icon = "🔴" if i == 0 else "🟡" if i == 1 else "🟢"
                     st.markdown(f"{icon} {corr['message']}")
             else:
                 if st.session_state.live_total_frames > 0:
                     st.success("✨ Perfect Alignment! Keep it up!")
+
+        # Post-Session Report
+        if not st.session_state.live_active and st.session_state.live_session_summary:
+            summary = st.session_state.live_session_summary
+            st.markdown("---")
+            st.success("✅ Session Saved Successfully!")
+            
+            summary_html = f"""
+            <div class="glass-card" style="border-color: rgba(16, 185, 129, 0.4);">
+                <h4 style="margin-top:0; color:#10b981; margin-bottom:0.5rem;">Session Report</h4>
+                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Pose:</b> {summary['pose_name']}</p>
+                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Duration:</b> {summary['duration_seconds']}s</p>
+                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Average Accuracy:</b> {summary['average_accuracy_pct']}%</p>
+                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Best Accuracy:</b> {summary['best_accuracy_pct']}%</p>
+                <p style="margin-bottom:0; color: #e5e7eb;"><b>Total Corrections:</b> {summary['total_corrections']}</p>
+            </div>
+            """
+            st.markdown(summary_html, unsafe_allow_html=True)
+
 
     with col_feed:
         if not st.session_state.live_active:
@@ -384,77 +423,124 @@ elif page == "Live Yoga Mode":
 
                     if results.pose_landmarks:
                         lm_list = results.pose_landmarks[0]
-
-                        # Draw skeleton on frame
+                        
+                        # Check full body visibility
+                        def check_vis(indices, threshold=0.5):
+                            return any(lm_list.landmark[i].visibility > threshold for i in indices)
+                            
+                        head_vis = check_vis([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) # Any head landmark
+                        shoulders_vis = check_vis([11, 12])
+                        hips_vis = check_vis([23, 24])
+                        knees_vis = check_vis([25, 26])
+                        ankles_vis = check_vis([27, 28])
+                        
                         annotated = img_cv.copy()
                         detector.draw_landmarks(annotated, lm_list)
-
-                        # Analyze pose
-                        analysis = analyzer.analyze(detector, lm_list, selected_pose, is_static=True)
-                        pose_key_det = analysis["detected_pose"]
-                        accuracy = analysis["accuracy"]
-                        stability = analysis["stability"]
-
-                        # Update session state
-                        st.session_state.live_total_frames += 1
-                        st.session_state.live_last_accuracy = accuracy
-                        st.session_state.live_last_stability = stability
-                        st.session_state.live_last_corrections = analysis.get("corrections", [])
-
-                        if accuracy > st.session_state.live_best_accuracy:
-                            st.session_state.live_best_accuracy = accuracy
-
-                        if pose_key_det != "unknown":
-                            pose_display = POSE_DATABASE[pose_key_det]["display_name"]
-                            st.session_state.live_last_pose = pose_display
+                        
+                        if not (head_vis and shoulders_vis and hips_vis and knees_vis and ankles_vis):
+                            st.warning("⚠️ Move back so your entire body is visible (head to ankles).")
+                            voice_coach.alert("visibility", "Move back so your entire body is visible.", cooldown=8.0)
+                            
+                            # Draw warning on frame
+                            h, w = annotated.shape[:2]
+                            cv2.rectangle(annotated, (0, 0), (w, 60), (30, 20, 255), -1)
+                            cv2.putText(annotated, "Step Back: Full Body Required", (10, 40),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+                            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
                         else:
-                            pose_display = "Detecting..."
+                            # Proceed with analysis
+                            analysis = analyzer.analyze(detector, lm_list, selected_pose, is_static=True)
+                            pose_key_det = analysis["detected_pose"]
+                            accuracy = analysis["accuracy"]
+                            stability = analysis["stability"]
+                            corrections = analysis.get("corrections", [])
 
-                        # Hold timer
-                        if accuracy >= 70.0:
-                            if st.session_state.live_pose_hold_start is None:
-                                st.session_state.live_pose_hold_start = time.monotonic()
-                            st.session_state.live_pose_hold_time = time.monotonic() - st.session_state.live_pose_hold_start
-                        else:
-                            st.session_state.live_pose_hold_start = None
-                            st.session_state.live_pose_hold_time = 0.0
+                            # Update session state and logger
+                            st.session_state.live_total_frames += 1
+                            st.session_state.live_last_accuracy = accuracy
+                            st.session_state.live_last_stability = stability
+                            st.session_state.live_last_corrections = corrections
 
-                        # Draw overlays on frame
-                        h, w = annotated.shape[:2]
+                            if st.session_state.live_session_logger:
+                                st.session_state.live_session_logger.record_accuracy(accuracy)
+                                if corrections:
+                                    st.session_state.live_session_logger.record_correction(corrections[0]["key"])
 
-                        # Top bar
-                        cv2.rectangle(annotated, (0, 0), (w, 48), (17, 24, 39), -1)
-                        cv2.putText(annotated, f"Pose: {pose_display}", (10, 34),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, (252, 132, 192), 2)
+                            if accuracy > st.session_state.live_best_accuracy:
+                                st.session_state.live_best_accuracy = accuracy
 
-                        # Bottom bar
-                        cv2.rectangle(annotated, (0, h - 56), (w, h), (17, 24, 39), -1)
-                        cv2.putText(annotated, f"Confidence: {int(accuracy)}%", (15, h - 32),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (182, 114, 244), 2)
-                        cv2.putText(annotated, f"Stability: {int(stability)}%  |  Hold: {st.session_state.live_pose_hold_time:.1f}s",
-                                    (15, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (129, 185, 16), 2)
+                            if pose_key_det != "unknown":
+                                pose_display = POSE_DATABASE[pose_key_det]["display_name"]
+                                st.session_state.live_last_pose = pose_display
+                                # Voice Coach: Announce detected pose
+                                voice_coach.alert(f"detected_{pose_key_det}", f"Pose detected: {pose_display}", cooldown=30.0)
+                            else:
+                                pose_display = "Detecting..."
 
-                        st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+                            # Voice Coach: Corrections & Reinforcement
+                            if corrections:
+                                main_correction = corrections[0]
+                                voice_coach.alert(main_correction["key"], main_correction["message"], cooldown=8.0)
+                            else:
+                                if accuracy >= 80.0:
+                                    voice_coach.alert("great_posture", "Great posture. Excellent balance.", cooldown=15.0)
 
-                        # Show candidate scores under the frame
-                        if show_debug:
-                            candidate_scores = analysis.get("candidate_scores", {})
-                            if candidate_scores:
-                                st.markdown("**Top Candidate Poses:**")
-                                sorted_c = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                                for pname, score in sorted_c[:4]:
-                                    bar_color = "#10b981" if score >= 70 else "#f59e0b" if score >= 40 else "#ef4444"
-                                    st.markdown(f"""
-                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                                        <span style="color:#e5e7eb;font-size:0.82rem;">{pname}</span>
-                                        <div style="display:flex;align-items:center;gap:8px;">
-                                            <div style="width:90px;background:rgba(255,255,255,0.07);height:6px;border-radius:3px;">
-                                                <div style="background:{bar_color};width:{min(score,100)}%;height:6px;border-radius:3px;"></div>
+                            # Hold timer
+                            if accuracy >= 75.0:
+                                if st.session_state.live_pose_hold_start is None:
+                                    st.session_state.live_pose_hold_start = time.monotonic()
+                                st.session_state.live_pose_hold_time = time.monotonic() - st.session_state.live_pose_hold_start
+                                
+                                # Voice milestones
+                                held_sec = int(st.session_state.live_pose_hold_time)
+                                if held_sec == 5:
+                                    voice_coach.alert("hold_5", "Good, hold it there.", cooldown=30.0)
+                                elif held_sec == 15:
+                                    voice_coach.alert("hold_15", "Excellent, keep holding.", cooldown=30.0)
+                                elif held_sec == 30:
+                                    voice_coach.alert("hold_30", "Amazing balance, 30 seconds reached.", cooldown=60.0)
+                            else:
+                                # Pause timer if accuracy drops below 75%
+                                if st.session_state.live_pose_hold_start is not None:
+                                    # Adjust start time so the elapsed time remains frozen
+                                    st.session_state.live_pose_hold_start = time.monotonic() - st.session_state.live_pose_hold_time
+
+                            # Draw overlays on frame
+                            h, w = annotated.shape[:2]
+
+                            # Top bar
+                            cv2.rectangle(annotated, (0, 0), (w, 48), (17, 24, 39), -1)
+                            cv2.putText(annotated, f"Pose: {pose_display}", (10, 34),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (252, 132, 192), 2)
+
+                            # Bottom bar
+                            cv2.rectangle(annotated, (0, h - 56), (w, h), (17, 24, 39), -1)
+                            cv2.putText(annotated, f"Confidence: {int(accuracy)}%", (15, h - 32),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (182, 114, 244), 2)
+                            cv2.putText(annotated, f"Stability: {int(stability)}%  |  Hold: {st.session_state.live_pose_hold_time:.1f}s",
+                                        (15, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (129, 185, 16), 2)
+
+                            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+
+                            # Show candidate scores under the frame
+                            if show_debug:
+                                candidate_scores = analysis.get("candidate_scores", {})
+                                if candidate_scores:
+                                    st.markdown("**Top Candidate Poses:**")
+                                    sorted_c = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
+                                    for pname, score in sorted_c[:4]:
+                                        bar_color = "#10b981" if score >= 70 else "#f59e0b" if score >= 40 else "#ef4444"
+                                        st.markdown(f"""
+                                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                                            <span style="color:#e5e7eb;font-size:0.82rem;">{pname}</span>
+                                            <div style="display:flex;align-items:center;gap:8px;">
+                                                <div style="width:90px;background:rgba(255,255,255,0.07);height:6px;border-radius:3px;">
+                                                    <div style="background:{bar_color};width:{min(score,100)}%;height:6px;border-radius:3px;"></div>
+                                                </div>
+                                                <b style="color:{bar_color};font-size:0.82rem;min-width:36px;">{score:.0f}%</b>
                                             </div>
-                                            <b style="color:{bar_color};font-size:0.82rem;min-width:36px;">{score:.0f}%</b>
                                         </div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                        """, unsafe_allow_html=True)
                     else:
                         # No pose detected — still show the frame
                         st.image(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB), use_container_width=True)
