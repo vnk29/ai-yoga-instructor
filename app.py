@@ -428,7 +428,7 @@ elif page == "Live Yoga Mode":
                         
                         # Check full body visibility
                         def check_vis(indices, threshold=0.5):
-                            return any(lm_list.landmark[i].visibility > threshold for i in indices)
+                            return any(getattr(lm_list[i], "visibility", 1.0) > threshold for i in indices)
                             
                         head_vis = check_vis([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) 
                         shoulders_vis = check_vis([11, 12])
