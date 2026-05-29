@@ -3,5 +3,4 @@ opencv-python-headless>=4.8.0
 numpy>=1.24.0
 streamlit
 pyttsx3
-streamlit-webrtc
-av
+streamlit-camera-input-live
