@@ -403,6 +403,7 @@ elif page == "Live Yoga Mode":
             # --- Initialize our completely custom WebRTC-Bypassing Component ---
             import os
             import base64
+            import mediapipe as mp
             
             # Declare the component once
             _component_func = components.declare_component(
@@ -411,7 +412,8 @@ elif page == "Live Yoga Mode":
             )
             
             # Render the component and capture the base64 string
-            base64_img = _component_func(key="websocket_camera", default=None)
+            overlay_data = st.session_state.get('live_overlay', {})
+            base64_img = _component_func(key="websocket_camera", default=None, overlay=overlay_data)
 
             if base64_img is not None and base64_img.startswith('data:image'):
                 # Decode image from base64
@@ -425,6 +427,18 @@ elif page == "Live Yoga Mode":
 
                     if results.pose_landmarks:
                         lm_list = results.pose_landmarks[0]
+                        new_overlay = {"points": [], "lines": [], "hud": {}}
+                        
+                        # Extract landmark coordinates and connections for JS Canvas Overlay
+                        for connection in mp.solutions.pose.POSE_CONNECTIONS:
+                            start_idx = connection[0]
+                            end_idx = connection[1]
+                            lm_start = lm_list[start_idx]
+                            lm_end = lm_list[end_idx]
+                            new_overlay["lines"].append([lm_start.x, lm_start.y, lm_end.x, lm_end.y])
+                            
+                        for lm in lm_list:
+                            new_overlay["points"].append([lm.x, lm.y])
                         
                         # Check full body visibility
                         def check_vis(indices, threshold=0.5):
@@ -436,18 +450,12 @@ elif page == "Live Yoga Mode":
                         knees_vis = check_vis([25, 26])
                         ankles_vis = check_vis([27, 28])
                         
-                        annotated = img_cv.copy()
-                        detector.draw_landmarks(annotated, lm_list)
-                        
                         if not (head_vis and shoulders_vis and hips_vis and knees_vis and ankles_vis):
                             st.warning("⚠️ Move back so your entire body is visible (head to ankles).")
                             voice_coach.alert("visibility", "Move back so your entire body is visible.", cooldown=8.0)
                             
-                            h, w = annotated.shape[:2]
-                            cv2.rectangle(annotated, (0, 0), (w, 60), (30, 20, 255), -1)
-                            cv2.putText(annotated, "Step Back: Full Body Required", (10, 40),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
-                            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True, caption="AI Analysis Feed")
+                            new_overlay["hud"]["warning"] = "Step Back: Full Body Required"
+                            st.session_state.live_overlay = new_overlay
                         else:
                             # Proceed with analysis
                             analysis = analyzer.analyze(detector, lm_list, selected_pose, is_static=True)
@@ -502,20 +510,11 @@ elif page == "Live Yoga Mode":
                                 if st.session_state.live_pose_hold_start is not None:
                                     st.session_state.live_pose_hold_start = time.monotonic() - st.session_state.live_pose_hold_time
 
-                            # Draw overlays on frame (HUD style)
-                            h, w = annotated.shape[:2]
-
-                            cv2.rectangle(annotated, (0, 0), (w, 48), (17, 24, 39), -1)
-                            cv2.putText(annotated, f"Pose: {pose_display}", (10, 34),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (252, 132, 192), 2)
-
-                            cv2.rectangle(annotated, (0, h - 56), (w, h), (17, 24, 39), -1)
-                            cv2.putText(annotated, f"Confidence: {int(accuracy)}%", (15, h - 32),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (182, 114, 244), 2)
-                            cv2.putText(annotated, f"Stability: {int(stability)}%  |  Hold: {st.session_state.live_pose_hold_time:.1f}s",
-                                        (15, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (129, 185, 16), 2)
-
-                            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True, caption="AI Analysis Feed")
+                            new_overlay["hud"]["pose"] = pose_display
+                            new_overlay["hud"]["confidence"] = f"{int(accuracy)}%"
+                            new_overlay["hud"]["stability"] = f"{int(stability)}%"
+                            new_overlay["hud"]["hold"] = f"{st.session_state.live_pose_hold_time:.1f}s"
+                            st.session_state.live_overlay = new_overlay
 
                             if show_debug:
                                 candidate_scores = analysis.get("candidate_scores", {})

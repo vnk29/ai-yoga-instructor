@@ -27,7 +27,20 @@
         transform: scaleX(-1); /* Mirror effect */
         display: block;
       }
-      canvas { display: none; }
+      /* Hidden canvas for capturing frames */
+      #captureCanvas { display: none; }
+      
+      /* Visible canvas for drawing AI overlay */
+      #overlayCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none; /* Let clicks pass through to video if needed */
+        transform: scaleX(-1); /* Match video mirror so coordinates align naturally, but wait: text will be backwards if mirrored. We should handle mirroring in JS logic or flip context for text. */
+      }
+      
       .controls { 
         margin-top: 15px; 
       }
@@ -50,8 +63,9 @@
   <body>
     <div class="video-container">
       <video id="video" autoplay playsinline></video>
+      <canvas id="overlayCanvas"></canvas>
     </div>
-    <canvas id="canvas"></canvas>
+    <canvas id="captureCanvas"></canvas>
     
     <div class="controls">
       <button id="toggleBtn">Start Live Camera</button>
@@ -81,10 +95,124 @@
         sendMessageToStreamlitClient("streamlit:setComponentValue", {value: data});
       }
 
+      // ----------------------------------------------------
+      // Overlay Drawing Logic
+      // ----------------------------------------------------
+      const overlayCanvas = document.getElementById('overlayCanvas');
+      const overlayCtx = overlayCanvas.getContext('2d');
+      
+      // We flip the canvas horizontally because the video is mirrored.
+      // But we must un-flip before drawing text, otherwise text is backwards.
+      function drawOverlay(data) {
+        if (!data || !video.videoWidth) return;
+        
+        // Ensure canvas matches video dimensions
+        if (overlayCanvas.width !== video.videoWidth || overlayCanvas.height !== video.videoHeight) {
+          overlayCanvas.width = video.videoWidth;
+          overlayCanvas.height = video.videoHeight;
+        }
+        
+        const w = overlayCanvas.width;
+        const h = overlayCanvas.height;
+        
+        overlayCtx.clearRect(0, 0, w, h);
+        
+        // Draw Skeleton (Points and Lines)
+        if (data.lines && data.points) {
+          // Flip context for skeleton because video is visually flipped via CSS, 
+          // but coordinates from MediaPipe assume the unflipped image.
+          // Wait, if Python processes the UNFLIPPED image, the coordinates are UNFLIPPED.
+          // Since the CSS scales X by -1, the canvas is ALSO flipped visually if we don't do anything.
+          // Let's remove the CSS transform from canvas and just flip X in JS.
+          
+          overlayCtx.save();
+          // We will draw normally, but we flip X coordinates.
+          
+          overlayCtx.lineWidth = 3;
+          overlayCtx.strokeStyle = "rgba(200, 200, 50, 0.8)";
+          
+          // Lines
+          data.lines.forEach(line => {
+            const x1 = (1.0 - line[0]) * w; // Flip X
+            const y1 = line[1] * h;
+            const x2 = (1.0 - line[2]) * w; // Flip X
+            const y2 = line[3] * h;
+            
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(x1, y1);
+            overlayCtx.lineTo(x2, y2);
+            overlayCtx.stroke();
+          });
+          
+          // Points
+          overlayCtx.fillStyle = "rgba(50, 200, 50, 0.9)";
+          data.points.forEach(pt => {
+            const x = (1.0 - pt[0]) * w; // Flip X
+            const y = pt[1] * h;
+            
+            overlayCtx.beginPath();
+            overlayCtx.arc(x, y, 4, 0, 2 * Math.PI);
+            overlayCtx.fill();
+          });
+          
+          overlayCtx.restore();
+        }
+        
+        // Draw HUD
+        if (data.hud) {
+          overlayCtx.save();
+          // Text is NOT flipped
+          
+          // Warning Background (Top)
+          if (data.hud.warning) {
+            overlayCtx.fillStyle = "rgba(220, 38, 38, 0.9)"; // Red
+            overlayCtx.fillRect(0, 0, w, 60);
+            overlayCtx.fillStyle = "white";
+            overlayCtx.font = "bold 24px sans-serif";
+            overlayCtx.fillText(data.hud.warning, 15, 38);
+          }
+          
+          // HUD Background (Bottom)
+          overlayCtx.fillStyle = "rgba(17, 24, 39, 0.85)"; // Dark gray
+          overlayCtx.fillRect(0, h - 60, w, 60);
+          
+          // Top mini HUD (Pose name)
+          if (!data.hud.warning && data.hud.pose) {
+             overlayCtx.fillStyle = "rgba(17, 24, 39, 0.85)";
+             overlayCtx.fillRect(0, 0, w, 50);
+             overlayCtx.fillStyle = "#fc84c0"; // Pinkish
+             overlayCtx.font = "bold 22px sans-serif";
+             overlayCtx.fillText("Pose: " + data.hud.pose, 15, 33);
+          }
+          
+          // Bottom stats
+          if (data.hud.confidence) {
+             overlayCtx.fillStyle = "#b672f4"; // Purple
+             overlayCtx.font = "bold 18px sans-serif";
+             overlayCtx.fillText("Confidence: " + data.hud.confidence, 15, h - 35);
+          }
+          
+          if (data.hud.stability || data.hud.hold) {
+             overlayCtx.fillStyle = "#81b910"; // Green
+             overlayCtx.font = "16px sans-serif";
+             overlayCtx.fillText(
+               "Stability: " + (data.hud.stability || "0%") + "  |  Hold: " + (data.hud.hold || "0.0s"), 
+               15, h - 12
+             );
+          }
+          
+          overlayCtx.restore();
+        }
+      }
+
       window.addEventListener("message", function(event) {
         if (event.data.type === "streamlit:render") {
-          // Adjust iframe height automatically
           setFrameHeight(document.body.scrollHeight + 20);
+          
+          // Read overlay data passed from Python
+          if (event.data.args && event.data.args.overlay) {
+            drawOverlay(event.data.args.overlay);
+          }
         }
       });
 
@@ -92,9 +220,12 @@
       // Camera App Logic
       // ----------------------------------------------------
       const video = document.getElementById('video');
-      const canvas = document.getElementById('canvas');
-      const ctx = canvas.getContext('2d');
+      const captureCanvas = document.getElementById('captureCanvas');
+      const ctx = captureCanvas.getContext('2d');
       const toggleBtn = document.getElementById('toggleBtn');
+      
+      // Ensure overlay canvas doesn't flip visually via CSS
+      overlayCanvas.style.transform = "none";
       
       let stream = null;
       let captureInterval = null;
@@ -103,29 +234,32 @@
       toggleBtn.addEventListener('click', async () => {
         if (!isPlaying) {
           try {
-            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
             video.srcObject = stream;
             isPlaying = true;
             toggleBtn.textContent = "Stop Camera";
             toggleBtn.classList.add('active');
             
-            // Start capturing frames every 400ms (2.5 FPS)
-            captureInterval = setInterval(() => {
-              if (video.videoWidth) {
-                // Resize canvas to match video
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+            // Wait for video to be ready before starting interval
+            video.onloadedmetadata = () => {
+                // Clear overlay when starting
+                overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
                 
-                // Draw current video frame to canvas
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                // Export as highly compressed JPEG to prevent Websocket overload
-                const base64Data = canvas.toDataURL('image/jpeg', 0.6);
-                
-                // Send base64 string to Streamlit backend
-                sendDataToPython(base64Data);
-              }
-            }, 400);
+                // Start capturing frames every 250ms (4 FPS) for slightly faster response
+                captureInterval = setInterval(() => {
+                  if (video.videoWidth) {
+                    captureCanvas.width = video.videoWidth;
+                    captureCanvas.height = video.videoHeight;
+                    
+                    ctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+                    
+                    // Export as JPEG (quality 0.5) to keep websocket payload extremely small
+                    const base64Data = captureCanvas.toDataURL('image/jpeg', 0.5);
+                    
+                    sendDataToPython(base64Data);
+                  }
+                }, 250);
+            };
 
           } catch (err) {
             console.error("Camera access denied:", err);
@@ -140,7 +274,7 @@
           toggleBtn.textContent = "Start Live Camera";
           toggleBtn.classList.remove('active');
           
-          // Send null to clear backend state
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
           sendDataToPython(null);
         }
       });
