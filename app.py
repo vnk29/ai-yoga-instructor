@@ -615,37 +615,39 @@ elif page == "Upload Image Mode":
                             lm_list = target_results.pose_landmarks[0]
                             
                             vis_scores = []
-                            core_joints = [
-                                upload_detector._PoseLandmark.LEFT_SHOULDER,
-                                upload_detector._PoseLandmark.RIGHT_SHOULDER,
-                                upload_detector._PoseLandmark.LEFT_HIP,
-                                upload_detector._PoseLandmark.RIGHT_HIP,
-                                upload_detector._PoseLandmark.LEFT_KNEE,
-                                upload_detector._PoseLandmark.RIGHT_KNEE,
-                                upload_detector._PoseLandmark.LEFT_ANKLE,
-                                upload_detector._PoseLandmark.RIGHT_ANKLE
-                            ]
-                            for joint in core_joints:
-                                lm = lm_list[joint.value]
-                                vis_scores.append(getattr(lm, "visibility", 1.0))
+                            core_indices = [11, 12, 23, 24, 25, 26, 27, 28]  # shoulders, hips, knees, ankles
+                            for idx in core_indices:
+                                try:
+                                    lm = lm_list[idx]
+                                    vis_scores.append(getattr(lm, "visibility", 1.0))
+                                except Exception:
+                                    vis_scores.append(0.5)
                             
                             avg_visibility = sum(vis_scores) / len(vis_scores) if vis_scores else 0
                             
-                            if avg_visibility < 0.50:
+                            if avg_visibility < 0.30:
                                 st.error("Image quality insufficient for accurate pose detection")
-                                st.info(f"Landmark visibility score: {avg_visibility:.2f} (Minimum required: 0.50)")
+                                st.info(f"Landmark visibility score: {avg_visibility:.2f} (Minimum required: 0.30)")
                                 st.write("Please upload a clearer image where the full body is visible.")
                             else:
                                 # 2. Extract features using existing primitives
-                                c = analyzer._extract_coords(upload_detector, target_results.pose_landmarks[0])
+                                c = analyzer._extract_coords(upload_detector, lm_list)
                                 ac = analyzer._build_angle_cache(c)
                                 o = analyzer._compute_orientation(c, ac)
                                 
                                 # 3. Category-First Classification
-                                detected_category, cat_conf, cat_reason = analyzer.classify_category(c, ac, o)
+                                cat_result = analyzer.classify_category(c, ac, o)
+                                detected_category = cat_result[0]
+                                cat_conf = cat_result[1] if len(cat_result) > 1 else 0.0
+                                cat_reason = cat_result[2] if len(cat_result) > 2 else ""
                                 
                                 # 4. Dataset-Assisted Pose Similarity Engine
-                                candidate_scores, candidate_details = similarity_engine.evaluate_image(detected_category, c, ac, o)
+                                sim_result = similarity_engine.evaluate_image(detected_category, c, ac, o)
+                                if isinstance(sim_result, tuple) and len(sim_result) == 2:
+                                    candidate_scores, candidate_details = sim_result
+                                else:
+                                    candidate_scores = sim_result if isinstance(sim_result, dict) else {}
+                                    candidate_details = {}
                                 
                                 # Sort candidates by confidence
                                 sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
@@ -656,7 +658,7 @@ elif page == "Upload Image Mode":
                                 if sorted_candidates:
                                     best_pose, best_score = sorted_candidates[0]
                                     
-                                is_low_confidence = best_score < 65.0
+                                is_low_confidence = best_score < 55.0
                                 
                                 # 5. Interactive UI Display
                                 col_m1, col_m2 = st.columns(2)
@@ -665,15 +667,14 @@ elif page == "Upload Image Mode":
                                 with col_m2:
                                     st.metric("Visibility Score", f"{avg_visibility * 100:.1f}%")
                                 
-                                from yoga_similarity_engine import POSE_SIGNATURES
                                 if is_low_confidence:
                                     st.warning("⚠ Pose Uncertain — confidence below threshold")
                                     st.info("**Detected Pose:** Pose Uncertain")
                                 else:
-                                    display = POSE_SIGNATURES.get(best_pose, {}).get('display_name', best_pose.replace('_', ' ').title())
+                                    display = best_pose.replace('_', ' ').title()
                                     st.success(f"**Detected Pose:** {display}")
                                 
-                                st.write(f"**Body Category:** {detected_category}")
+                                st.write(f"**Body Category:** {detected_category} (conf: {cat_conf:.0f}%)")
                                 if cat_reason:
                                     st.caption(f"Reason: {cat_reason}")
                                 
@@ -681,32 +682,41 @@ elif page == "Upload Image Mode":
                                 if sorted_candidates:
                                     st.markdown("**✅ Top 3 Candidate Poses:**")
                                     for pose_name, score in sorted_candidates[:3]:
-                                        display_name = POSE_SIGNATURES.get(pose_name, {}).get('display_name', pose_name.replace('_', ' ').title())
+                                        display_name = pose_name.replace('_', ' ').title()
                                         st.write(f"- {display_name} → {score:.1f}%")
                                 
                                 # Debug Panel: Matched & Failed Features
-                                if best_pose != "unknown":
+                                if best_pose != "unknown" and candidate_details:
                                     with st.expander(f"🔍 Feature Breakdown: {best_pose.replace('_', ' ').title()}"):
                                         details = candidate_details.get(best_pose, {})
                                         if details.get("matched"):
-                                            st.markdown("**Matched Features (Dataset Stats):**")
+                                            st.markdown("**Matched Features:**")
                                             for m in details.get("matched", []):
                                                 st.write(f"🟢 {m}")
                                         if details.get("failed"):
                                             st.markdown("**Failed Features:**")
-                                            for f in details.get("failed", []):
-                                                st.write(f"🔴 {f}")
+                                            for f_item in details.get("failed", []):
+                                                st.write(f"🔴 {f_item}")
                                                 
                                 # Debug Panel: Orientation Metrics
-                                if o:
-                                    with st.expander("📐 Body Orientation Metrics"):
-                                        st.json(o)
+                                with st.expander("📐 Body Orientation Metrics"):
+                                    display_o = {k: round(v, 4) if isinstance(v, float) else v for k, v in o.items()}
+                                    st.json(display_o)
                                 
-                                if ac:
-                                    with st.expander("🦴 Joint Angles"):
-                                        st.json(ac)
+                                with st.expander("🦴 Joint Angles"):
+                                    display_ac = {}
+                                    for k, v in ac.items():
+                                        if isinstance(v, float):
+                                            display_ac[k] = round(v, 2)
+                                        elif isinstance(v, tuple):
+                                            display_ac[k] = [round(x, 4) for x in v]
+                                        else:
+                                            display_ac[k] = str(v)
+                                    st.json(display_ac)
                         except Exception as e:
+                            import traceback
                             st.warning(f"Analysis error: {str(e)}")
+                            st.code(traceback.format_exc(), language="text")
                     else:
                         st.info("No pose skeleton detected. Try:\n- Better lighting\n- Full body in frame\n- Higher quality image")
             else:
