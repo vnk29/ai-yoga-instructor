@@ -13,7 +13,7 @@ import streamlit as st
 from PIL import Image
 from pathlib import Path
 import streamlit.components.v1 as components
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
 
 # Core imports
@@ -280,7 +280,7 @@ elif page == "Live Yoga Mode":
             ]
         })
 
-        class YogaVideoTransformer(VideoTransformerBase):
+        class YogaVideoTransformer(VideoProcessorBase):
             def __init__(self):
                 self.target_pose = "Auto-Detect"
                 # Using a fresh detector for thread safety in WebRTC
@@ -292,7 +292,7 @@ elif page == "Live Yoga Mode":
                 self.hold_start = None
                 self.hold_time = 0.0
                 
-            def transform(self, frame):
+            def recv(self, frame):
                 img_cv = frame.to_ndarray(format="bgr24")
                 img_cv = cv2.flip(img_cv, 1)
                 
@@ -385,18 +385,18 @@ elif page == "Live Yoga Mode":
                     cv2.rectangle(annotated, (0, 0), (w, 60), (31, 41, 55), -1)
                     cv2.putText(annotated, "Waiting for pose detection...", (15, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (156, 163, 175), 2)
 
-                return annotated
+                return av.VideoFrame.from_ndarray(annotated, format="bgr24")
 
         webrtc_ctx = webrtc_streamer(
             key="yoga_webrtc",
-            video_transformer_factory=YogaVideoTransformer,
+            video_processor_factory=YogaVideoTransformer,
             rtc_configuration=RTC_CONFIG,
             media_stream_constraints={"video": True, "audio": False},
         )
 
         # Update the transformer's target pose safely
-        if webrtc_ctx.video_transformer:
-            webrtc_ctx.video_transformer.target_pose = selected_pose
+        if webrtc_ctx.video_processor:
+            webrtc_ctx.video_processor.target_pose = selected_pose
 
 # =========================================================================
 # PAGE: UPLOAD IMAGE MODE
