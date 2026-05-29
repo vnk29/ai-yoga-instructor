@@ -633,6 +633,16 @@ elif page == "Upload Image Mode":
                                 # 2. Extract features using existing primitives
                                 c = analyzer._extract_coords(upload_detector, lm_list)
                                 ac = analyzer._build_angle_cache(c)
+                                
+                                # Ensure all expected keys are in ac with sensible defaults to prevent KeyError/TypeError in any cached/stale modules
+                                for key in ["left_knee", "right_knee", "left_hip", "right_hip", "left_arm", "right_arm", "left_shoulder_angle", "right_shoulder_angle"]:
+                                    if ac.get(key) is None:
+                                        ac[key] = 180.0 if any(jk in key for jk in ["knee", "hip", "arm"]) else 30.0
+                                if ac.get("shoulder_mid") is None:
+                                    ac["shoulder_mid"] = None
+                                if ac.get("hip_mid") is None:
+                                    ac["hip_mid"] = None
+
                                 o = analyzer._compute_orientation(c, ac)
                                 
                                 # 3. Category-First Classification

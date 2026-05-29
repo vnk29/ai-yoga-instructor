@@ -164,6 +164,32 @@ POSE_SIGNATURES = {
         "torso_slope": 60, # Leaning back
         "aspect_ratio_min": 0.8,
         "limb_ratios": {}
+    },
+
+    # ================= BACKBEND =================
+    "bridge": {
+        "category": "Backbend",
+        "angles": {
+            "left_knee": 90, "right_knee": 90,
+            "left_hip": 150, "right_hip": 150,
+            "left_arm": 180, "right_arm": 180,
+            "left_shoulder_angle": 10, "right_shoulder_angle": 10
+        },
+        "torso_slope": 35,
+        "aspect_ratio_min": 0.5,
+        "limb_ratios": {}
+    },
+    "camel": {
+        "category": "Backbend",
+        "angles": {
+            "left_knee": 90, "right_knee": 90,
+            "left_hip": 160, "right_hip": 160,
+            "left_arm": 160, "right_arm": 160,
+            "left_shoulder_angle": 70, "right_shoulder_angle": 70
+        },
+        "torso_slope": 40,
+        "aspect_ratio_min": 0.8,
+        "limb_ratios": {}
     }
 }
 
@@ -187,14 +213,21 @@ class PoseSimilarityEngine:
         candidate_scores = {}
         candidate_details = {}
 
-        # 1. Extract dynamic features from the image to match against symmetric signatures
+        # 1. Extract dynamic features safely with explicit fallback defaults to avoid KeyError or TypeError
+        lk = ac.get("left_knee") if ac.get("left_knee") is not None else 180.0
+        rk = ac.get("right_knee") if ac.get("right_knee") is not None else 180.0
+        lh = ac.get("left_hip") if ac.get("left_hip") is not None else 180.0
+        rh = ac.get("right_hip") if ac.get("right_hip") is not None else 180.0
+        ls = ac.get("left_shoulder_angle") if ac.get("left_shoulder_angle") is not None else 30.0
+        rs = ac.get("right_shoulder_angle") if ac.get("right_shoulder_angle") is not None else 30.0
+
         img_features = {
-            "max_knee": max(ac.get("left_knee", 180.0), ac.get("right_knee", 180.0)),
-            "min_knee": min(ac.get("left_knee", 180.0), ac.get("right_knee", 180.0)),
-            "max_hip": max(ac.get("left_hip", 180.0), ac.get("right_hip", 180.0)),
-            "min_hip": min(ac.get("left_hip", 180.0), ac.get("right_hip", 180.0)),
-            "arms_spread": ac.get("left_shoulder_angle", 30.0) + ac.get("right_shoulder_angle", 30.0),
-            "knee_to_shoulder_spread": (o.get("knee_x_spread", 0.1) / (o.get("shoulder_x_spread", 0.15) + 1e-6))
+            "max_knee": max(lk, rk),
+            "min_knee": min(lk, rk),
+            "max_hip": max(lh, rh),
+            "min_hip": min(lh, rh),
+            "arms_spread": ls + rs,
+            "knee_to_shoulder_spread": (o.get("knee_x_spread", 0.1) or 0.1) / ((o.get("shoulder_x_spread", 0.15) or 0.15) + 1e-6)
         }
 
         # 2. Iterate through all supported poses
