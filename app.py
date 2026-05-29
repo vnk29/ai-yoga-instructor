@@ -657,9 +657,16 @@ elif page == "Upload Image Mode":
                                     
                                 # 3. Category-First Classification
                                 cat_result = analyzer.classify_category(c, ac, o)
-                                detected_category = cat_result[0]
-                                cat_conf = cat_result[1] if len(cat_result) > 1 else 0.0
-                                cat_reason = cat_result[2] if len(cat_result) > 2 else ""
+                                
+                                # Defensive check for old cached module that returns a single string
+                                if isinstance(cat_result, str):
+                                    detected_category = cat_result
+                                    cat_conf = 100.0  # Dummy confidence
+                                    cat_reason = ""
+                                else:
+                                    detected_category = cat_result[0]
+                                    cat_conf = cat_result[1] if len(cat_result) > 1 else 0.0
+                                    cat_reason = cat_result[2] if len(cat_result) > 2 else ""
                                 
                                 # 4. Dataset-Assisted Pose Similarity Engine
                                 sim_result = similarity_engine.evaluate_image(detected_category, c, ac, o)
