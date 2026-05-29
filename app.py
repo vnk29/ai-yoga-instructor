@@ -612,21 +612,22 @@ elif page == "Upload Image Mode":
                     if target_results and target_results.pose_landmarks:
                         try:
                             # 1. Landmark Quality & Visibility Check
-                            lm_list = target_results.pose_landmarks[0].landmark
+                            lm_list = target_results.pose_landmarks[0]
                             
                             vis_scores = []
                             core_joints = [
-                                upload_detector.mp_pose.PoseLandmark.LEFT_SHOULDER,
-                                upload_detector.mp_pose.PoseLandmark.RIGHT_SHOULDER,
-                                upload_detector.mp_pose.PoseLandmark.LEFT_HIP,
-                                upload_detector.mp_pose.PoseLandmark.RIGHT_HIP,
-                                upload_detector.mp_pose.PoseLandmark.LEFT_KNEE,
-                                upload_detector.mp_pose.PoseLandmark.RIGHT_KNEE,
-                                upload_detector.mp_pose.PoseLandmark.LEFT_ANKLE,
-                                upload_detector.mp_pose.PoseLandmark.RIGHT_ANKLE
+                                upload_detector._PoseLandmark.LEFT_SHOULDER,
+                                upload_detector._PoseLandmark.RIGHT_SHOULDER,
+                                upload_detector._PoseLandmark.LEFT_HIP,
+                                upload_detector._PoseLandmark.RIGHT_HIP,
+                                upload_detector._PoseLandmark.LEFT_KNEE,
+                                upload_detector._PoseLandmark.RIGHT_KNEE,
+                                upload_detector._PoseLandmark.LEFT_ANKLE,
+                                upload_detector._PoseLandmark.RIGHT_ANKLE
                             ]
                             for joint in core_joints:
-                                vis_scores.append(lm_list[joint.value].visibility)
+                                lm = lm_list[joint.value]
+                                vis_scores.append(getattr(lm, "visibility", 1.0))
                             
                             avg_visibility = sum(vis_scores) / len(vis_scores) if vis_scores else 0
                             
