@@ -665,8 +665,19 @@ elif page == "Upload Image Mode":
                                     cat_reason = ""
                                 else:
                                     detected_category = cat_result[0]
-                                    cat_conf = cat_result[1] if len(cat_result) > 1 else 0.0
-                                    cat_reason = cat_result[2] if len(cat_result) > 2 else ""
+                                    
+                                    # Defensively handle different tuple formats from cached modules
+                                    if len(cat_result) > 1:
+                                        if isinstance(cat_result[1], (float, int)):
+                                            cat_conf = float(cat_result[1])
+                                            cat_reason = cat_result[2] if len(cat_result) > 2 else ""
+                                        else:
+                                            # The middle version returned (category, reason)
+                                            cat_conf = 100.0
+                                            cat_reason = str(cat_result[1])
+                                    else:
+                                        cat_conf = 100.0
+                                        cat_reason = ""
                                 
                                 # 4. Dataset-Assisted Pose Similarity Engine
                                 sim_result = similarity_engine.evaluate_image(detected_category, c, ac, o)
