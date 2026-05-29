@@ -13,7 +13,8 @@ import streamlit as st
 from PIL import Image
 from pathlib import Path
 import streamlit.components.v1 as components
-from streamlit_autorefresh import st_autorefresh
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+import av
 
 # Core imports
 from yoga_config import CAMERA_INDEX, POSE_DATABASE
@@ -248,303 +249,154 @@ if page == "Home":
             draw_card(pose_name, body_html)
 
 # =========================================================================
-# PAGE: LIVE YOGA MODE  (Browser-native camera — works on ALL networks)
+# PAGE: LIVE YOGA MODE  (True WebRTC Continuous Streaming with HUD)
 # =========================================================================
 elif page == "Live Yoga Mode":
     render_title_section("LIVE YOGA COACH", "Real-Time AI Pose Detection & Coaching")
-
-    # ── Session state for live mode ──────────────────────────────────────
-    if "live_active" not in st.session_state:
-        st.session_state.live_active = False
-    if "live_pose_hold_start" not in st.session_state:
-        st.session_state.live_pose_hold_start = None
-    if "live_pose_hold_time" not in st.session_state:
-        st.session_state.live_pose_hold_time = 0.0
-    if "live_best_accuracy" not in st.session_state:
-        st.session_state.live_best_accuracy = 0.0
-    if "live_total_frames" not in st.session_state:
-        st.session_state.live_total_frames = 0
-    if "live_last_pose" not in st.session_state:
-        st.session_state.live_last_pose = "—"
-    if "live_last_accuracy" not in st.session_state:
-        st.session_state.live_last_accuracy = 0.0
-    if "live_last_stability" not in st.session_state:
-        st.session_state.live_last_stability = 0.0
-    if "live_last_corrections" not in st.session_state:
-        st.session_state.live_last_corrections = []
-    if "live_session_logger" not in st.session_state:
-        st.session_state.live_session_logger = None
-    if "live_session_summary" not in st.session_state:
-        st.session_state.live_session_summary = None
 
     # ── Layout ──────────────────────────────────────────────────────────
     col_ctrl, col_feed = st.columns([1, 2.2])
 
     with col_ctrl:
         st.markdown("### ⚙️ Settings")
-
         selected_pose = st.selectbox(
             "Target Posture",
-            ["Auto-Detect"] + [data["display_name"] for data in POSE_DATABASE.values()],
-            disabled=st.session_state.live_active
+            ["Auto-Detect"] + [data["display_name"] for data in POSE_DATABASE.values()]
         )
-
-        show_debug = st.checkbox("Show Diagnostics", value=True)
-
         st.markdown("---")
-
-        # Start / Stop toggle
-        if not st.session_state.live_active:
-            if st.button("🎥 Start Live Session", use_container_width=True, type="primary"):
-                st.session_state.live_active = True
-                st.session_state.live_pose_hold_start = None
-                st.session_state.live_pose_hold_time = 0.0
-                st.session_state.live_best_accuracy = 0.0
-                st.session_state.live_total_frames = 0
-                st.session_state.live_session_logger = SessionLogger(selected_pose)
-                st.session_state.live_session_summary = None
-                st.rerun()
-        else:
-            if st.button("⏹️ Stop Session", use_container_width=True):
-                st.session_state.live_active = False
-                if st.session_state.live_session_logger:
-                    st.session_state.live_session_summary = st.session_state.live_session_logger.save()
-                    st.session_state.live_session_logger = None
-                st.rerun()
-
-        if st.session_state.live_active and st.session_state.live_session_logger:
-            logger = st.session_state.live_session_logger
-            
-            # Live metrics sidebar
-            st.markdown("#### 📊 Live Metrics")
-
-            acc = st.session_state.live_last_accuracy
-            stb = st.session_state.live_last_stability
-            hold = st.session_state.live_pose_hold_time
-            best = st.session_state.live_best_accuracy
-            frames = st.session_state.live_total_frames
-            corrections_cnt = logger.total_corrections
-            
-            # Format session duration
-            sess_dur = int(logger.duration)
-            mins, secs = divmod(sess_dur, 60)
-            duration_str = f"{mins:02d}:{secs:02d}"
-
-            acc_color = "#10b981" if acc >= 70 else "#f59e0b" if acc >= 40 else "#ef4444"
-            hold_color = "#10b981" if hold > 0 else "#9ca3af"
-
-            st.markdown(f"""
-            <div class="metrics-container">
-                <div class="metric-tile" style="border-color:{acc_color}; padding:0.75rem;">
-                    <div class="metric-val" style="font-size:1.8rem; color:{acc_color};">{acc:.0f}%</div>
-                    <div class="metric-label" style="font-size:0.7rem;">Confidence</div>
-                </div>
-                <div class="metric-tile" style="padding:0.75rem;">
-                    <div class="metric-val" style="font-size:1.8rem; color:#818cf8;">{stb:.0f}%</div>
-                    <div class="metric-label" style="font-size:0.7rem;">Stability</div>
-                </div>
-            </div>
-            <div class="metric-tile" style="border-color:{hold_color}; margin-top:0.5rem; padding:1rem;">
-                <div style="font-size:0.7rem; color:#9ca3af; text-transform:uppercase; letter-spacing:1px;">Hold Time</div>
-                <div style="font-size:2rem; font-weight:800; color:{hold_color}; font-family:monospace;">{hold:.1f}s</div>
-            </div>
-            <div style="margin-top:0.75rem; color:#9ca3af; font-size:0.8rem; display:flex; justify-content:space-between;">
-                <span>⏱️ Session: <b style="color:#e5e7eb;">{duration_str}</b></span>
-                <span>🏆 Best: <b style="color:#e5e7eb;">{best:.0f}%</b></span>
-                <span>🔧 Corrections: <b style="color:#e5e7eb;">{corrections_cnt}</b></span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Corrections panel
-            st.markdown("#### 🧘 AI Coaching")
-            if st.session_state.live_last_corrections:
-                for i, corr in enumerate(st.session_state.live_last_corrections[:3]):
-                    icon = "🔴" if i == 0 else "🟡" if i == 1 else "🟢"
-                    st.markdown(f"{icon} {corr['message']}")
-            else:
-                if st.session_state.live_total_frames > 0:
-                    st.success("✨ Perfect Alignment! Keep it up!")
-
-        # Post-Session Report
-        if not st.session_state.live_active and st.session_state.live_session_summary:
-            summary = st.session_state.live_session_summary
-            st.markdown("---")
-            st.success("✅ Session Saved Successfully!")
-            
-            summary_html = f"""
-            <div class="glass-card" style="border-color: rgba(16, 185, 129, 0.4);">
-                <h4 style="margin-top:0; color:#10b981; margin-bottom:0.5rem;">Session Report</h4>
-                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Pose:</b> {summary['pose_name']}</p>
-                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Duration:</b> {summary['duration_seconds']}s</p>
-                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Average Accuracy:</b> {summary['average_accuracy_pct']}%</p>
-                <p style="margin-bottom:0.4rem; color: #e5e7eb;"><b>Best Accuracy:</b> {summary['best_accuracy_pct']}%</p>
-                <p style="margin-bottom:0; color: #e5e7eb;"><b>Total Corrections:</b> {summary['total_corrections']}</p>
-            </div>
-            """
-            st.markdown(summary_html, unsafe_allow_html=True)
-
+        st.info("💡 **Pro Tip**: Make sure your entire body (head to ankles) is visible in the camera frame.")
 
     with col_feed:
-        if not st.session_state.live_active:
-            st.markdown("""
-            <div class="glass-card" style="text-align:center; padding:3.5rem 2rem; border-color:rgba(139,92,246,0.3);">
-                <div style="font-size:3.5rem; margin-bottom:1rem;">🧘</div>
-                <div style="color:#c084fc; font-size:1.5rem; font-weight:700; margin-bottom:0.75rem;">Ready to Start</div>
-                <div style="color:#9ca3af; font-size:1rem; line-height:1.8;">
-                    Click <b style="color:#e5e7eb;">🎥 Start Live Session</b> to begin.<br>
-                    Your browser will ask for camera permission.<br>
-                    Stand back so your <b style="color:#e5e7eb;">full body is visible</b>.
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # ── Auto-refresh every 2 seconds for live feel ──────────────
-            st_autorefresh(interval=2000, key="live_yoga_refresh")
+        # Define the highly reliable TURN network configuration
+        RTC_CONFIG = RTCConfiguration({
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["stun:stun1.l.google.com:19302"]},
+                {
+                    "urls": ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"],
+                    "username": "openrelayproject",
+                    "credential": "openrelayproject"
+                }
+            ]
+        })
 
-            # ── Capture frame ────────────────────────────────────────────
-            # Use a rotating key so camera_input resets on each cycle
-            frame_key = f"yoga_frame_{st.session_state.live_total_frames % 5}"
-            captured = st.camera_input(
-                "📸 Live Feed — Stay in frame",
-                key=frame_key,
-                label_visibility="collapsed"
-            )
-
-            if captured is not None:
-                # Decode image
-                img_bytes = captured.getvalue()
-                img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-                img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-                if img_cv is not None:
-                    img_cv = cv2.flip(img_cv, 1)
-                    rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-                    results = detector.process(rgb)
-
-                    if results.pose_landmarks:
-                        lm_list = results.pose_landmarks[0]
+        class YogaVideoTransformer(VideoTransformerBase):
+            def __init__(self):
+                self.target_pose = "Auto-Detect"
+                # Using a fresh detector for thread safety in WebRTC
+                self.local_detector = PoseDetector()
+                self.local_analyzer = YogaAnalyzer()
+                
+                self.total_frames = 0
+                self.best_accuracy = 0.0
+                self.hold_start = None
+                self.hold_time = 0.0
+                
+            def transform(self, frame):
+                img_cv = frame.to_ndarray(format="bgr24")
+                img_cv = cv2.flip(img_cv, 1)
+                
+                rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+                results = self.local_detector.process(rgb)
+                
+                self.total_frames += 1
+                annotated = img_cv.copy()
+                
+                if results.pose_landmarks:
+                    lm_list = results.pose_landmarks[0]
+                    self.local_detector.draw_landmarks(annotated, lm_list)
+                    
+                    # Full body check
+                    def check_vis(indices, threshold=0.5):
+                        return any(lm_list.landmark[i].visibility > threshold for i in indices)
                         
-                        # Check full body visibility
-                        def check_vis(indices, threshold=0.5):
-                            return any(lm_list.landmark[i].visibility > threshold for i in indices)
-                            
-                        head_vis = check_vis([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) # Any head landmark
-                        shoulders_vis = check_vis([11, 12])
-                        hips_vis = check_vis([23, 24])
-                        knees_vis = check_vis([25, 26])
-                        ankles_vis = check_vis([27, 28])
-                        
-                        annotated = img_cv.copy()
-                        detector.draw_landmarks(annotated, lm_list)
-                        
-                        if not (head_vis and shoulders_vis and hips_vis and knees_vis and ankles_vis):
-                            st.warning("⚠️ Move back so your entire body is visible (head to ankles).")
-                            voice_coach.alert("visibility", "Move back so your entire body is visible.", cooldown=8.0)
-                            
-                            # Draw warning on frame
-                            h, w = annotated.shape[:2]
-                            cv2.rectangle(annotated, (0, 0), (w, 60), (30, 20, 255), -1)
-                            cv2.putText(annotated, "Step Back: Full Body Required", (10, 40),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
-                            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-                        else:
-                            # Proceed with analysis
-                            analysis = analyzer.analyze(detector, lm_list, selected_pose, is_static=True)
-                            pose_key_det = analysis["detected_pose"]
-                            accuracy = analysis["accuracy"]
-                            stability = analysis["stability"]
-                            corrections = analysis.get("corrections", [])
-
-                            # Update session state and logger
-                            st.session_state.live_total_frames += 1
-                            st.session_state.live_last_accuracy = accuracy
-                            st.session_state.live_last_stability = stability
-                            st.session_state.live_last_corrections = corrections
-
-                            if st.session_state.live_session_logger:
-                                st.session_state.live_session_logger.record_accuracy(accuracy)
-                                if corrections:
-                                    st.session_state.live_session_logger.record_correction(corrections[0]["key"])
-
-                            if accuracy > st.session_state.live_best_accuracy:
-                                st.session_state.live_best_accuracy = accuracy
-
-                            if pose_key_det != "unknown":
-                                pose_display = POSE_DATABASE[pose_key_det]["display_name"]
-                                st.session_state.live_last_pose = pose_display
-                                # Voice Coach: Announce detected pose
-                                voice_coach.alert(f"detected_{pose_key_det}", f"Pose detected: {pose_display}", cooldown=30.0)
-                            else:
-                                pose_display = "Detecting..."
-
-                            # Voice Coach: Corrections & Reinforcement
-                            if corrections:
-                                main_correction = corrections[0]
-                                voice_coach.alert(main_correction["key"], main_correction["message"], cooldown=8.0)
-                            else:
-                                if accuracy >= 80.0:
-                                    voice_coach.alert("great_posture", "Great posture. Excellent balance.", cooldown=15.0)
-
-                            # Hold timer
-                            if accuracy >= 75.0:
-                                if st.session_state.live_pose_hold_start is None:
-                                    st.session_state.live_pose_hold_start = time.monotonic()
-                                st.session_state.live_pose_hold_time = time.monotonic() - st.session_state.live_pose_hold_start
-                                
-                                # Voice milestones
-                                held_sec = int(st.session_state.live_pose_hold_time)
-                                if held_sec == 5:
-                                    voice_coach.alert("hold_5", "Good, hold it there.", cooldown=30.0)
-                                elif held_sec == 15:
-                                    voice_coach.alert("hold_15", "Excellent, keep holding.", cooldown=30.0)
-                                elif held_sec == 30:
-                                    voice_coach.alert("hold_30", "Amazing balance, 30 seconds reached.", cooldown=60.0)
-                            else:
-                                # Pause timer if accuracy drops below 75%
-                                if st.session_state.live_pose_hold_start is not None:
-                                    # Adjust start time so the elapsed time remains frozen
-                                    st.session_state.live_pose_hold_start = time.monotonic() - st.session_state.live_pose_hold_time
-
-                            # Draw overlays on frame
-                            h, w = annotated.shape[:2]
-
-                            # Top bar
-                            cv2.rectangle(annotated, (0, 0), (w, 48), (17, 24, 39), -1)
-                            cv2.putText(annotated, f"Pose: {pose_display}", (10, 34),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (252, 132, 192), 2)
-
-                            # Bottom bar
-                            cv2.rectangle(annotated, (0, h - 56), (w, h), (17, 24, 39), -1)
-                            cv2.putText(annotated, f"Confidence: {int(accuracy)}%", (15, h - 32),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (182, 114, 244), 2)
-                            cv2.putText(annotated, f"Stability: {int(stability)}%  |  Hold: {st.session_state.live_pose_hold_time:.1f}s",
-                                        (15, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (129, 185, 16), 2)
-
-                            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-
-                            # Show candidate scores under the frame
-                            if show_debug:
-                                candidate_scores = analysis.get("candidate_scores", {})
-                                if candidate_scores:
-                                    st.markdown("**Top Candidate Poses:**")
-                                    sorted_c = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                                    for pname, score in sorted_c[:4]:
-                                        bar_color = "#10b981" if score >= 70 else "#f59e0b" if score >= 40 else "#ef4444"
-                                        st.markdown(f"""
-                                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                                            <span style="color:#e5e7eb;font-size:0.82rem;">{pname}</span>
-                                            <div style="display:flex;align-items:center;gap:8px;">
-                                                <div style="width:90px;background:rgba(255,255,255,0.07);height:6px;border-radius:3px;">
-                                                    <div style="background:{bar_color};width:{min(score,100)}%;height:6px;border-radius:3px;"></div>
-                                                </div>
-                                                <b style="color:{bar_color};font-size:0.82rem;min-width:36px;">{score:.0f}%</b>
-                                            </div>
-                                        </div>
-                                        """, unsafe_allow_html=True)
+                    head_vis = check_vis([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+                    shoulders_vis = check_vis([11, 12])
+                    hips_vis = check_vis([23, 24])
+                    knees_vis = check_vis([25, 26])
+                    ankles_vis = check_vis([27, 28])
+                    
+                    if not (head_vis and shoulders_vis and hips_vis and knees_vis and ankles_vis):
+                        voice_coach.alert("visibility", "Move back so your entire body is visible.", cooldown=8.0)
+                        h, w = annotated.shape[:2]
+                        cv2.rectangle(annotated, (0, 0), (w, 60), (30, 20, 255), -1)
+                        cv2.putText(annotated, "Step Back: Full Body Required", (10, 40),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
                     else:
-                        # No pose detected — still show the frame
-                        st.image(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB), use_container_width=True)
-                        st.warning("⚠️ No pose detected — stand back so your full body is visible.")
+                        analysis = self.local_analyzer.analyze(self.local_detector, lm_list, self.target_pose, is_static=False)
+                        pose_key_det = analysis["detected_pose"]
+                        accuracy = analysis["accuracy"]
+                        stability = analysis["stability"]
+                        corrections = analysis.get("corrections", [])
+
+                        if accuracy > self.best_accuracy:
+                            self.best_accuracy = accuracy
+
+                        pose_display = POSE_DATABASE[pose_key_det]["display_name"] if pose_key_det != "unknown" else "Detecting..."
+                        if pose_key_det != "unknown":
+                            voice_coach.alert(f"detected_{pose_key_det}", f"Pose detected: {pose_display}", cooldown=30.0)
+
+                        if corrections:
+                            main_correction = corrections[0]
+                            voice_coach.alert(main_correction["key"], main_correction["message"], cooldown=8.0)
+                        elif accuracy >= 80.0:
+                            voice_coach.alert("great_posture", "Great posture. Excellent balance.", cooldown=15.0)
+
+                        if accuracy >= 75.0:
+                            if self.hold_start is None:
+                                self.hold_start = time.monotonic()
+                            self.hold_time = time.monotonic() - self.hold_start
+                            
+                            held_sec = int(self.hold_time)
+                            if held_sec == 5:
+                                voice_coach.alert("hold_5", "Good, hold it there.", cooldown=30.0)
+                            elif held_sec == 15:
+                                voice_coach.alert("hold_15", "Excellent, keep holding.", cooldown=30.0)
+                            elif held_sec == 30:
+                                voice_coach.alert("hold_30", "Amazing balance, 30 seconds reached.", cooldown=60.0)
+                        else:
+                            if self.hold_start is not None:
+                                self.hold_start = time.monotonic() - self.hold_time
+
+                        # Draw beautiful HUD directly on frame
+                        h, w = annotated.shape[:2]
+
+                        # Top HUD bar
+                        cv2.rectangle(annotated, (0, 0), (w, 50), (31, 41, 55), -1)
+                        cv2.putText(annotated, f"Target: {self.target_pose}", (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (209, 213, 219), 2)
+                        cv2.putText(annotated, f"Detected: {pose_display}", (w // 2, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (252, 132, 192), 2)
+
+                        # Bottom HUD bar
+                        cv2.rectangle(annotated, (0, h - 80), (w, h), (31, 41, 55), -1)
+                        cv2.putText(annotated, f"Confidence: {int(accuracy)}%", (15, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (182, 114, 244), 2)
+                        cv2.putText(annotated, f"Stability: {int(stability)}%", (15, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (129, 185, 16), 2)
+                        cv2.putText(annotated, f"Hold Time: {self.hold_time:.1f}s", (w // 2, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (16, 185, 129), 2)
+                        cv2.putText(annotated, f"Best Acc: {int(self.best_accuracy)}%", (w // 2, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (209, 213, 219), 2)
+
+                        # Draw corrections on screen
+                        if corrections:
+                            for i, corr in enumerate(corrections[:2]):
+                                cv2.putText(annotated, f"> {corr['message']}", (15, 80 + (i * 30)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (59, 130, 246), 2)
+                        elif accuracy > 70:
+                            cv2.putText(annotated, "✨ Perfect Alignment!", (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (16, 185, 129), 2)
+
+                else:
+                    h, w = annotated.shape[:2]
+                    cv2.rectangle(annotated, (0, 0), (w, 60), (31, 41, 55), -1)
+                    cv2.putText(annotated, "Waiting for pose detection...", (15, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (156, 163, 175), 2)
+
+                return annotated
+
+        webrtc_ctx = webrtc_streamer(
+            key="yoga_webrtc",
+            video_transformer_factory=YogaVideoTransformer,
+            rtc_configuration=RTC_CONFIG,
+            media_stream_constraints={"video": True, "audio": False},
+        )
+
+        # Update the transformer's target pose safely
+        if webrtc_ctx.video_transformer:
+            webrtc_ctx.video_transformer.target_pose = selected_pose
 
 # =========================================================================
 # PAGE: UPLOAD IMAGE MODE
