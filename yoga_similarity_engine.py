@@ -211,7 +211,7 @@ class PoseSimilarityEngine:
         return candidate_scores, candidate_details
 
     def _calculate_similarity(self, pose_name: str, signature: dict, ac: dict, o: dict, img: dict) -> tuple:
-        """Calculate multi-modal similarity for a specific pose."""
+        """Calculate multi-modal similarity for a specific pose with vigorous tuning."""
         total_weight = 0.0
         weighted_sum = 0.0
         details = {"matched": [], "failed": []}
@@ -219,22 +219,27 @@ class PoseSimilarityEngine:
         # 1. Angle Similarity (Weight: 60%)
         angle_weight = 60.0 / max(len(signature["angles"]), 1)
         for angle_name, target_val in signature["angles"].items():
-            # Map signature keys to image values
+            # Dynamic sigma (tolerance) based on the joint type for maximum robustness
+            # Hips and shoulders vary more widely than knees/elbows across different body types
+            if "hip" in angle_name or "shoulder" in angle_name:
+                sigma = 35.0
+            else:
+                sigma = 25.0
+                
             val = None
-            if angle_name in ac:
-                val = ac[angle_name]
+            if angle_name in ac: val = ac[angle_name]
             elif angle_name == "straight_knee": val = img["max_knee"]
             elif angle_name == "bent_knee": val = img["min_knee"]
             elif angle_name == "straight_hip": val = img["max_hip"]
             elif angle_name == "bent_hip": val = img["min_hip"]
-            elif angle_name == "front_knee": val = img["min_knee"] # Warrior poses
+            elif angle_name == "front_knee": val = img["min_knee"]
             elif angle_name == "back_knee": val = img["max_knee"]
             elif angle_name == "front_hip": val = img["min_hip"]
             elif angle_name == "back_hip": val = img["max_hip"]
             elif angle_name == "arms_spread": val = img["arms_spread"]
 
             if val is not None:
-                sim = self.gaussian_similarity(val, target_val, sigma=25.0) # 25 degree standard deviation
+                sim = self.gaussian_similarity(val, target_val, sigma=sigma)
                 weighted_sum += sim * angle_weight
                 total_weight += angle_weight
                 
@@ -243,8 +248,9 @@ class PoseSimilarityEngine:
                 else: details["failed"].append(label)
 
         # 2. Torso Orientation Similarity (Weight: 20%)
+        # Slope can vary heavily depending on camera angle, so we use a loose sigma of 30.0
         target_slope = signature["torso_slope"]
-        slope_sim = self.gaussian_similarity(o["torso_slope"], target_slope, sigma=20.0)
+        slope_sim = self.gaussian_similarity(o["torso_slope"], target_slope, sigma=30.0)
         weighted_sum += slope_sim * 20.0
         total_weight += 20.0
         label = f"torso_slope: {o['torso_slope']:.1f}° (target: {target_slope}°)"
@@ -252,9 +258,9 @@ class PoseSimilarityEngine:
         else: details["failed"].append(label)
 
         # 3. Body Geometry & Aspect Ratio (Weight: 10%)
+        # Aspect ratios vary significantly between thin/wide bodies
         target_ar = signature["aspect_ratio_min"]
-        # Use a looser sigma for aspect ratio
-        ar_sim = self.gaussian_similarity(o["aspect_ratio"], target_ar, sigma=1.0)
+        ar_sim = self.gaussian_similarity(o["aspect_ratio"], target_ar, sigma=1.5)
         weighted_sum += ar_sim * 10.0
         total_weight += 10.0
         label = f"aspect_ratio: {o['aspect_ratio']:.2f} (target: {target_ar:.1f})"
@@ -265,7 +271,7 @@ class PoseSimilarityEngine:
         for ratio_name, target_ratio in signature["limb_ratios"].items():
             if ratio_name == "knee_to_shoulder_spread":
                 val = img["knee_to_shoulder_spread"]
-                sim = self.gaussian_similarity(val, target_ratio, sigma=0.5)
+                sim = self.gaussian_similarity(val, target_ratio, sigma=0.8)
                 weighted_sum += sim * 10.0
                 total_weight += 10.0
                 label = f"knee_spread_ratio: {val:.1f} (target: {target_ratio:.1f})"
